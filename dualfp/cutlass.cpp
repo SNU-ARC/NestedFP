@@ -732,7 +732,6 @@ void naive_divide_fp16(const at::Tensor& S, const at::Tensor& D1, const at::Tens
 void naive_merge_fp8(const at::Tensor& S1, const at::Tensor& S2, const at::Tensor& D);
 bool cublas_tn(const torch::Tensor& X, const torch::Tensor& W, const torch::Tensor& Y);
 
-
 // using KernelFunc = at::Tensor(*)(const at::Tensor&, const at::Tensor&);
 
 

@@ -30,7 +30,7 @@ setup(
             'weight_handle.cu',
             'cublas.cu'
         ],
-        include_dirs=['/disk/dual-fp-llm/cutlass/python/cutlass_library/../../include', '/disk/dual-fp-llm/cutlass/python/cutlass_library/../../tools/util/include'],
+        include_dirs=['/disk/NestedFP/cutlass/python/cutlass_library/../../include', '/disk/NestedFP/cutlass/python/cutlass_library/../../tools/util/include'],
         extra_compile_args={
             'nvcc': [
                 '-forward-unknown-to-host-compiler',
