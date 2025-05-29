@@ -12,9 +12,7 @@ from vllm import LLM, SamplingParams
 # sys.path.append("/disk/")
 
 import sys
-sys.path.insert(0, "/disk/vllm")  # vllm 소스 디렉토리의 상위 경로
-import common_globals
-
+sys.path.insert(0, "/disk/revision/vllm")  # vllm 소스 디렉토리의 상위 경로
 def get_idle_gpu():
     result = subprocess.run(
         ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],

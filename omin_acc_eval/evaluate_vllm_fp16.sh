@@ -73,7 +73,7 @@ run_model_evaluation() {
         
         for task in "${tasks[@]}"; do
             echo "GPU $gpu_id - Model $model - Running $task"
-            PYTHONPATH="/disk/vllm:$PYTHONPATH" VLLM_WORKER_MULTIPROC_METHOD=spawn CUDA_VISIBLE_DEVICES=$gpu_id VLLM_USE_V1=1 VLLM_FLASH_ATTN_VERSION=3 HF_ALLOW_CODE_EVAL=1 lm_eval --model vllm --model_args pretrained=/disk/models/$model,tensor_parallel_size=1,add_bos_token=True,dtype="float16",enforce_eager=True --tasks ${task} --batch_size auto --trust_remote_code --confirm_run_unsafe_code &> record/result_fp16_${model}_GPU${gpu_id}_${task}_vllm_1.txt
+            PYTHONPATH="/disk/revision/vllm:$PYTHONPATH" VLLM_WORKER_MULTIPROC_METHOD=spawn CUDA_VISIBLE_DEVICES=$gpu_id VLLM_USE_V1=0 VLLM_FLASH_ATTN_VERSION=3 HF_ALLOW_CODE_EVAL=1 lm_eval --model vllm --model_args pretrained=/disk/models/$model,tensor_parallel_size=1,add_bos_token=True,dtype="float16",compilation_config=2 --tasks ${task} --batch_size auto --trust_remote_code --confirm_run_unsafe_code &> record/result_fp16_${model}_GPU${gpu_id}_${task}_vllm_1.txt
         done
         
         echo "GPU $gpu_id - Model $model - All tasks completed!"

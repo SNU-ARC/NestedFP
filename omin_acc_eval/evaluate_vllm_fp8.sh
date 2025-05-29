@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 사용할 GPU 목록
-VISIBLE_DEVICES=(0 1 2 3)
+VISIBLE_DEVICES=(4 5 6 7)
 TOTAL_GPUS=${#VISIBLE_DEVICES[@]}
 MEMORY_THRESHOLD=500  # MB 기준
 
@@ -17,10 +17,9 @@ MODELS=(
 tasks=(
     minerva_math
     bbh_zeroshot
+    # leaderboard_mmlu_pro
 )
 
-# 디코딩 설정 (JSON) - 반드시 큰따옴표로 묶고, 변수는 작은따옴표로 감싸야 함
-GEN_KWARGS='{"temperature": 0.0, "do_sample": false}'
 
 # Idle GPU 찾기
 find_idle_gpus() {
@@ -70,7 +69,9 @@ run_model_evaluation() {
             echo "GPU $gpu_id - Model $model - Running $task"
 
             # 환경변수 포함 평가 실행
-            PYTHONPATH="/disk/vllm:$PYTHONPATH" \
+            PYTHONPATH="/disk/revision/vllm:$PYTHONPATH" \
+            VLLM_USE_V1=0 \
+            VLLM_FLASH_ATTN_VERSION=3 \
             VLLM_WORKER_MULTIPROC_METHOD=spawn \
             CUDA_VISIBLE_DEVICES=$gpu_id \
             PYTHONHASHSEED=0 \
@@ -79,14 +80,14 @@ run_model_evaluation() {
             TORCH_USE_DETERMINISTIC_ALGORITHMS=1 \
             HF_ALLOW_CODE_EVAL=1 \
             lm_eval --model vllm \
-              --model_args pretrained=/disk/models/$model,tensor_parallel_size=1,add_bos_token=True,dtype="float16",enforce_eager=True \
-              --gen_kwargs="$GEN_KWARGS" \
+              --model_args pretrained=/disk/models/$model,tensor_parallel_size=1,add_bos_token=True,dtype="float16",compilation_config=2 \
               --tasks ${task} \
               --batch_size auto \
               --trust_remote_code \
               --confirm_run_unsafe_code \
               --verbosity WARNING \
-              &> record/result_fp8_${model}_GPU${gpu_id}_${task}_vllm_deterministic.txt
+              &> record/result_fp8_${model}_GPU${gpu_id}_${task}_vllm_1.txt
+              
         done
 
         echo "GPU $gpu_id - Model $model - All tasks completed!"

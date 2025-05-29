@@ -1,6 +1,6 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-MODEL_ID = '/disk/models/phi-4'
+MODEL_ID = '/disk/models/Llama-3.1-8B'
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_ID, device_map="auto", torch_dtype="half",
 )
@@ -17,6 +17,6 @@ recipe = QuantizationModifier(
 oneshot(model=model, recipe=recipe)
 
 # Save the model.
-SAVE_DIR = '/disk/models/phi-4-FP8-Dynamic-Half'
+SAVE_DIR = '/disk/models/Llama-3.1-8B-FP8-Dynamic-Half'
 model.save_pretrained(SAVE_DIR)
 tokenizer.save_pretrained(SAVE_DIR)

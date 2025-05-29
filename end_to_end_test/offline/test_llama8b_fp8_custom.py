@@ -12,11 +12,8 @@ from vllm import LLM, SamplingParams
 # sys.path.append("/disk/")
 
 import sys
-sys.path.insert(0, "/disk/vllm")  # vllm 소스 디렉토리의 상위 경로
+sys.path.insert(0, "/disk/revision/vllm")  # vllm 소스 디렉토리의 상위 경로
 
-
-
-import common_globals
 
 def get_idle_gpu():
     result = subprocess.run(
@@ -85,7 +82,7 @@ def main():
         llm_custom = LLM(
             model=model_path,
             dtype="float16",
-            quantization="dualfp",
+            quantization="nestedfp",
             max_num_batched_tokens = batch_size,
             max_num_seqs = batch_size,
             enable_prefix_caching=False,

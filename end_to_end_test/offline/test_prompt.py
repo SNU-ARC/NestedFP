@@ -7,7 +7,7 @@ import csv
 from vllm import LLM, SamplingParams
 
 import sys
-sys.path.insert(0, "/disk/vllm")  # vllm 소스 디렉토리의 상위 경로
+sys.path.insert(0, "/disk/revision/vllm")  # vllm 소스 디렉토리의 상위 경로
 
 def get_idle_gpu():
     result = subprocess.run(
@@ -48,9 +48,9 @@ def test_model_generation(model_path, output_file):
         llm = LLM(
             model=model_path,
             dtype="float16",
-            quantization="dualfp",
+            quantization="nestedfp",
             max_model_len=4096,       # Limit context length
-            enforce_eager=True        # Eager execution for better debugging
+            # enforce_eager=True        # Eager execution for better debugging
         )
         
         # Set sampling parameters
@@ -121,8 +121,8 @@ def main():
     print(f"Using GPU {idle_gpu}")
     
     # Set model path and output file
-    model_path = "/disk/models/Llama-3.1-8B"
-    output_file = "llama_generation_results.csv"
+    model_path = "/disk/models/Mistral-Small-24B-Base-2501"
+    output_file = "mistral_small_generation_results.csv"
     
     # Safely handle exceptions
     try:
