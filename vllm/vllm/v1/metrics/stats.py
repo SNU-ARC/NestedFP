@@ -31,9 +31,13 @@ class SchedulerStats:
     num_waiting_reqs: int = 0
 
     gpu_cache_usage: float = 0.0
+    kv_cache_usage_gb : float = 0.0
+    kv_cache_total_capacity: float = 0.0
 
     prefix_cache_stats: PrefixCacheStats = field(
         default_factory=PrefixCacheStats)
+    
+    
 
 
 @dataclass
@@ -76,8 +80,8 @@ class FinishedRequestStats:
 class IterationStats:
     """Stats associated with a single set of EngineCoreOutputs."""
 
-    def __init__(self):
-        self.iteration_timestamp = time.time()
+    def __init__(self, iteration_total: int = 0):
+        self.iteration_timestamp = time.perf_counter()
         self.num_generation_tokens = 0
         self.num_prompt_tokens = 0
         self.num_preempted_reqs = 0
@@ -88,6 +92,16 @@ class IterationStats:
         self.time_per_output_tokens_iter: list[float] = []
         self.waiting_lora_adapters: dict[str, int] = {}
         self.running_lora_adapters: dict[str, int] = {}
+        
+        
+        self.iteration_total: int = iteration_total
+        self.total_scheduled_requests: int = 0
+        self.total_scheduled_tokens: int = 0
+        self.prefill_requests: int = 0
+        self.decode_requests: int = 0
+        self.prefill_tokens: int = 0
+        self.decode_tokens: int = 0
+        self.request_details: list[dict] = []
 
     def _time_since(self, start: float) -> float:
         """Calculate an interval relative to this iteration's timestamp."""
@@ -122,6 +136,24 @@ class IterationStats:
             self.time_per_output_tokens_iter.append(tpot)
 
         req_stats.last_token_ts = engine_core_timestamp
+
+    def update_scheduling_stats(self, 
+                               total_scheduled_requests: int,
+                               total_scheduled_tokens: int,
+                               prefill_requests: int,
+                               decode_requests: int,
+                               prefill_tokens: int,
+                               decode_tokens: int,
+                               request_details: Optional[list[dict]] = None):
+
+        self.total_scheduled_requests = total_scheduled_requests
+        self.total_scheduled_tokens = total_scheduled_tokens
+        self.prefill_requests = prefill_requests
+        self.decode_requests = decode_requests
+        self.prefill_tokens = prefill_tokens
+        self.decode_tokens = decode_tokens
+        if request_details:
+            self.request_details = request_details
 
     def update_from_events(self, req_id: str, events: list["EngineCoreEvent"],
                            is_prefilling: bool, req_stats: RequestStateStats,

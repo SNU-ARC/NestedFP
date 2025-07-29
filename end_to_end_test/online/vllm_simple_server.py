@@ -6,8 +6,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import argparse
 
 from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--port", type=int, help="port", default=8000)
+parser.add_argument("--gpu", type=float, help="gpu-memory-utilization", default=0.9)
+
+args = parser.parse_args()
 
 app = FastAPI()
 
@@ -20,12 +27,16 @@ app.add_middleware(
 )
 
 engine_args = AsyncEngineArgs(
-    # model="/disk/models/Llama-3.1-8B",
-    model="/disk/models/Llama-3.1-8B-FP8-Dynamic",
-    # model="/disk/models/Mistral-Small-24B-Base-2501",
-    # model="/disk/models/Mistral-Small-24B-Base-2501-FP8-Dynamic",
+    # model="Qwen/Qwen2.5-7B",
+    model = "/disk2/models/Llama-3.1-70B",
+    tensor_parallel_size=8,
     dtype="float16",
-    enable_prefix_caching=False
+    # quantization="nestedfp",
+    enable_prefix_caching=False,
+    gpu_memory_utilization=args.gpu,
+    max_num_batched_tokens=2048,
+    max_model_len= 16384,
+    enforce_eager= True,
 )
 engine = AsyncLLMEngine.from_engine_args(engine_args)
 
@@ -40,10 +51,14 @@ async def completions(request: Request):
         top_p = data.get("top_p", 1.0)
         stop = data.get("stop", None)
         echo = data.get("echo", False)
-        model = "mistral-24b"  # 정해진 모델 이름, 실제 모델명과 매칭해도 무방
+        model = "unknown"
 
         request_id = str(uuid.uuid4())
         created_time = int(time.time())
+        start_time = time.time()
+
+        # 요청 시작 로깅
+        print(f"[{request_id[:8]}] Request started")
 
         sampling_params = SamplingParams(
             temperature=temperature,
@@ -62,6 +77,10 @@ async def completions(request: Request):
                 full_text = output.outputs[0].text
                 num_prompt_tokens = output.prompt_token_ids.__len__()
                 num_completion_tokens = output.outputs[0].token_ids.__len__()
+
+            elapsed_time = time.time() - start_time
+            # 요청 완료 로깅
+            print(f"[{request_id[:8]}] Request completed in {elapsed_time:.2f}s")
 
             return {
                 "id": f"cmpl-{request_id[:8]}",
@@ -82,7 +101,6 @@ async def completions(request: Request):
             }
         else:
             async def stream_response():
-                first_chunk = True
                 async for output in engine.generate(prompt, sampling_params, request_id=request_id):
                     for token in output.outputs:
                         chunk = {
@@ -90,10 +108,31 @@ async def completions(request: Request):
                                 "text": token.text,
                                 "index": 0,
                                 "logprobs": None,
-                                "finish_reason": None
+                                "finish_reason": None,
+                                # 🔄 기존 필드들
+                                "iteration_total": getattr(output, 'iteration_total', None),
+                                "iteration_timestamp": getattr(output, 'iteration_timestamp', None),
+                                "kv_cache_usage": getattr(output, 'kv_cache_usage', None),
+                                "kv_cache_usage_gb": getattr(output, 'kv_cache_usage_gb', None),
+                                "kv_cache_total_capacity": getattr(output, 'kv_cache_total_capacity', None),
+                                "num_prefill": getattr(output, 'num_prefill', None),
+                                "num_decode": getattr(output, 'num_decode', None),
+                                
+                                # 🆕 새로운 스케줄링 필드들 추가
+                                "total_scheduled_requests": getattr(output, 'total_scheduled_requests', None),
+                                "total_scheduled_tokens": getattr(output, 'total_scheduled_tokens', None),
+                                "prefill_requests": getattr(output, 'prefill_requests', None),
+                                "decode_requests": getattr(output, 'decode_requests', None),
+                                "prefill_tokens": getattr(output, 'prefill_tokens', None),
+                                "decode_tokens": getattr(output, 'decode_tokens', None),
+                                "request_details": getattr(output, 'request_details', []),
                             }]
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
+                
+                elapsed_time = time.time() - start_time
+                # 스트림 완료 로깅
+                print(f"[{request_id[:8]}] Stream completed in {elapsed_time:.2f}s")
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(stream_response(), media_type="text/event-stream")
@@ -102,4 +141,4 @@ async def completions(request: Request):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=args.port)

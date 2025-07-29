@@ -64,7 +64,10 @@ class AsyncLLM(EngineClient):
         assert start_engine_loop
 
         self.model_config = vllm_config.model_config
-
+        
+        
+        ## NestedFP : For Stats
+        self.iteration_total = 0
         self.log_requests = log_requests
         self.log_stats = log_stats
 
@@ -303,9 +306,26 @@ class AsyncLLM(EngineClient):
                 # 1) Pull EngineCoreOutputs from the EngineCore.
                 outputs = await self.engine_core.get_output_async()
                 num_outputs = len(outputs.outputs)
+                
+                self.iteration_total += 1
 
-                iteration_stats = IterationStats() if (
+                iteration_stats = IterationStats(iteration_total=self.iteration_total) if (
                     self.log_stats and num_outputs) else None
+                
+                
+                # if iteration_stats and outputs.scheduling_details:
+                #     details = outputs.scheduling_details
+                #     iteration_stats.total_scheduled_requests = details['total_scheduled_requests']
+                #     iteration_stats.total_scheduled_tokens = details['total_scheduled_tokens']
+                #     iteration_stats.prefill_requests = details['prefill_requests']
+                #     iteration_stats.decode_requests = details['decode_requests'] 
+                #     iteration_stats.prefill_tokens = details['prefill_tokens']
+                #     iteration_stats.decode_tokens = details['decode_tokens']
+                #     iteration_stats.request_details = details['request_details']
+
+                num_decode = sum([ 1 if output.events == None else 0 for output in outputs.outputs ])
+                num_prefill = num_outputs - num_decode
+                    
 
                 # Split outputs into chunks of at most
                 # VLLM_V1_OUTPUT_PROC_CHUNK_SIZE, so that we don't block the
@@ -320,7 +340,8 @@ class AsyncLLM(EngineClient):
                 for i, outputs_slice in enumerate(slices):
                     # 2) Process EngineCoreOutputs.
                     processed_outputs = self.output_processor.process_outputs(
-                        outputs_slice, outputs.timestamp, iteration_stats)
+                        outputs_slice, outputs.timestamp, iteration_stats,
+                        outputs.scheduler_stats,num_prefill, num_decode)
                     # NOTE: RequestOutputs are pushed to their queues.
                     assert not processed_outputs.request_outputs
 

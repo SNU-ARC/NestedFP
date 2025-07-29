@@ -60,8 +60,7 @@ WEIGHT_LOADER_V2_SUPPORTED = [
 
 import sys
 sys.path.append("/disk/")  # common_globals.py가 있는 경로 추가
- 
-from common_globals import global_fp16_baseline_time_ms  # import 가능
+
  
 
 

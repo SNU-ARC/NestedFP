@@ -26,7 +26,12 @@ class BlockPool:
         enable_caching: Whether to enable prefix caching.
     """
 
-    def __init__(self, num_gpu_blocks: int, enable_caching: bool):
+    def __init__(self, 
+        num_gpu_blocks: int, 
+        enable_caching: bool,
+        page_size_bytes: Optional[int] = None,
+        num_layers: Optional[int] = None,
+        ):
         self.num_gpu_blocks = num_gpu_blocks
         self.enable_caching = enable_caching
         # All kv-cache blocks.
@@ -49,6 +54,9 @@ class BlockPool:
         # block tables are append-only.
         self.cached_block_hash_to_block: dict[BlockHashType, dict[
             int, KVCacheBlock]] = defaultdict(dict)
+        
+        self.page_size_bytes = page_size_bytes
+        self.num_layers = num_layers
 
     def get_cached_block(self,
                          block_hash: BlockHashType) -> Optional[KVCacheBlock]:
@@ -272,3 +280,28 @@ class BlockPool:
             The KV cache usage (between 0.0 and 1.0).
         """
         return 1.0 - (self.get_num_free_blocks() / self.num_gpu_blocks)
+    
+    
+    def get_usage_gb(self) -> float:
+        """Get the KV cache usage in GB.
+
+        Returns:
+            The KV cache usage in GB. Returns 0.0 if page size is not set.
+        """
+        if self.page_size_bytes is None:
+            logger.warning("Page size in bytes is not set. Cannot calculate GB usage.")
+            return 0.0
+        
+        usage_ratio = self.get_usage()  # 0.0 to 1.0 비율
+        total_bytes = self.num_gpu_blocks * self.page_size_bytes
+        used_bytes = usage_ratio * total_bytes * self.num_layers
+        used_gb = used_bytes / (1024 ** 3)  # Convert bytes to GB
+        return used_gb
+
+    def get_total_capacity_gb(self) -> float:
+        """Get the total KV cache capacity in GB."""
+        if self.page_size_bytes is None:
+            return 0.0
+        
+        total_bytes = self.num_gpu_blocks * self.page_size_bytes * self.num_layers
+        return total_bytes / (1024 ** 3)

@@ -87,7 +87,7 @@ class DUALFPLinearMethod(LinearMethodBase):
     def __init__(self, quant_config: DUALFPConfig):
         self.quant_config = quant_config
         self.weight = None
-        self.is_dualfp_enabled = False
+        self.is_dualfp_enabled = True
         self.fp8 = True
 
     def create_weights(self, layer: torch.nn.Module,
@@ -107,29 +107,28 @@ class DUALFPLinearMethod(LinearMethodBase):
 
    
     def apply(self,
-              layer: torch.nn.Module,
-              x: torch.Tensor,
-              bias: Optional[torch.Tensor] = None) -> torch.Tensor:
+            layer: torch.nn.Module,
+            x: torch.Tensor,
+            bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         
         assert(bias is None)
         
-        def fp16_to_fp8(x, dtype =torch.float8_e4m3fn):
+        # 글로벌 상태에서 모드 가져오기
+        current_dualfp_enabled = DualFPGlobalState.get_dualfp_mode()
+        current_fp8_mode = DualFPGlobalState.get_fp8_mode()
+        
+        def fp16_to_fp8(x, dtype=torch.float8_e4m3fn):
             finfo = torch.finfo(torch.float8_e4m3fn)
             scale = finfo.max / x.abs().max().clamp(min=1e-12)
             x_scl_sat = (x * scale).clamp(min=finfo.min, max=finfo.max)
             x8 = x_scl_sat.to(torch.float8_e4m3fn)
             scale_factor = scale.float().reciprocal()
-            
             return x8, scale_factor
         
-        
-
-        if self.fp8 is True:
-            if self.is_dualfp_enabled:
-                
+        # self.fp8 → current_fp8_mode, self.is_dualfp_enabled → current_dualfp_enabled 로 변경
+        if current_fp8_mode:
+            if current_dualfp_enabled:
                 x8, scale_factor = fp16_to_fp8(x)
-
-                
                 M = x8.shape[0]
                 N = layer.weight.upper_part.shape[0]
                 K = layer.weight.upper_part.shape[1]
@@ -137,27 +136,11 @@ class DUALFPLinearMethod(LinearMethodBase):
             else:
                 return F.linear(x, layer.weight, bias)
         else:
-            if self.is_dualfp_enabled:
-                
+            if current_dualfp_enabled:
                 M = x.shape[0]
                 N = layer.weight.upper_part.shape[0]
                 K = layer.weight.upper_part.shape[1]
                 output = torch.ops.dualfp.fp16_custom(M, N, K, layer.weight.upper_part, layer.weight.lower_part, x)
-                
                 return output
-            
-            
             else:
                 return F.linear(x, layer.weight, bias)
-                
-                
-        
-        
-    
-        
-                    
-            
-            
-
-            
-            

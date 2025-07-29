@@ -13,7 +13,7 @@ from vllm.v1.engine import EngineCoreOutput, EngineCoreRequest, FinishReason
 from vllm.v1.engine.detokenizer import IncrementalDetokenizer
 from vllm.v1.engine.logprobs import LogprobsProcessor
 from vllm.v1.engine.parallel_sampling import ParentRequest
-from vllm.v1.metrics.stats import (IterationStats, LoRARequestStates,
+from vllm.v1.metrics.stats import (IterationStats, SchedulerStats, LoRARequestStates,
                                    RequestStateStats)
 
 
@@ -280,6 +280,9 @@ class OutputProcessor:
         engine_core_outputs: list[EngineCoreOutput],
         engine_core_timestamp: Optional[float] = None,
         iteration_stats: Optional[IterationStats] = None,
+        scheduler_stats: Optional[SchedulerStats] = None,
+        num_prefill: int = 0,
+        num_decode: int = 0,
     ) -> OutputProcessorOutput:
         """
         Process the EngineCoreOutputs:
@@ -338,6 +341,37 @@ class OutputProcessor:
             # 4) Create and handle RequestOutput objects.
             if request_output := req_state.make_request_output(
                     new_token_ids, finish_reason, stop_reason):
+                
+                
+                request_output.iteration_total = iteration_stats.iteration_total
+                request_output.iteration_timestamp = iteration_stats.iteration_timestamp
+                ## kv_cache_usage = gpu_cache_usage
+                request_output.kv_cache_usage = scheduler_stats.gpu_cache_usage
+                request_output.kv_cache_usage_gb = scheduler_stats.kv_cache_usage_gb
+                request_output.kv_cache_total_capacity = scheduler_stats.kv_cache_total_capacity
+                request_output.num_prefill = num_prefill
+                request_output.num_decode = num_decode
+                
+
+                if iteration_stats:
+                    request_output.total_scheduled_requests = iteration_stats.total_scheduled_requests
+                    request_output.total_scheduled_tokens = iteration_stats.total_scheduled_tokens
+                    request_output.prefill_requests = iteration_stats.prefill_requests
+                    request_output.decode_requests = iteration_stats.decode_requests
+                    request_output.prefill_tokens = iteration_stats.prefill_tokens
+                    request_output.decode_tokens = iteration_stats.decode_tokens
+                    request_output.request_details = iteration_stats.request_details
+                else:
+                    # iteration_stats가 없는 경우 기본값
+                    request_output.total_scheduled_requests = None
+                    request_output.total_scheduled_tokens = None
+                    request_output.prefill_requests = None
+                    request_output.decode_requests = None
+                    request_output.prefill_tokens = None
+                    request_output.decode_tokens = None
+                    request_output.request_details = []
+                
+                
                 if req_state.queue is not None:
                     # AsyncLLM: put into queue for handling by generate().
                     req_state.queue.put(request_output)

@@ -56,7 +56,6 @@ from .utils import (AutoWeightsLoader, PPMissingLayer, extract_layer_index,
 
 #from ipdb 
 import time
-import common_globals
 import nvtx
 
 

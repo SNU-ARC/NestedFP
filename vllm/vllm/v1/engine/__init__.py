@@ -101,6 +101,8 @@ class EngineCoreOutput(
     finish_reason: Optional[FinishReason] = None
     stop_reason: Union[int, str, None] = None
     events: Optional[list[EngineCoreEvent]] = None
+    
+    # scheduling_details: Optional[dict[str, Any]] = None
 
     @property
     def finished(self) -> bool:

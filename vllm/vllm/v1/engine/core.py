@@ -189,6 +189,89 @@ class EngineCore:
         self.scheduler.finish_requests(request_ids,
                                        RequestStatus.FINISHED_ABORTED)
 
+
+
+    def _collect_scheduling_details(self, scheduler_output: SchedulerOutput) -> dict:
+        """스케줄링 세부 정보 수집 (스케줄링 전 상태 기준)"""
+        
+        # prefill_count = decode_count = 0
+        # prefill_tokens = decode_tokens = 0
+        # request_details = []
+        # total_scheduled_tokens = 0
+        
+        # # 새로 시작된 요청들
+        # for req_data in scheduler_output.scheduled_new_reqs:
+        #     request = self.scheduler.requests[req_data.req_id]
+        #     tokens_scheduled = scheduler_output.num_scheduled_tokens[req_data.req_id]
+            
+        #     prefill_count += 1
+        #     prefill_tokens += tokens_scheduled
+        #     total_scheduled_tokens += tokens_scheduled
+            
+        #     request_details.append({
+        #         'request_id': req_data.req_id,
+        #         'phase': 'prefill',
+        #         'kv_cache_len': 0,
+        #         'scheduled_tokens': tokens_scheduled,
+        #         'total_prompt_len': request.num_prompt_tokens,
+        #         'generated_tokens': 0  # 🆕 prefill에서는 아직 생성 안됨
+        #     })
+        
+        # # 실행 중/재개된 요청들
+        # cached_reqs = scheduler_output.scheduled_cached_reqs
+        # for i, req in enumerate(cached_reqs):
+        #     request = self.scheduler.requests[req.req_id]
+        #     tokens_scheduled = scheduler_output.num_scheduled_tokens[req.req_id]
+        #     # CachedRequestData의 num_computed_tokens는 스케줄링 전 상태
+        #     kv_cache_len_before = cached_reqs.num_computed_tokens[i]
+            
+        #     if kv_cache_len_before <= request.num_prompt_tokens:
+        #         phase = 'prefill'
+        #         prefill_count += 1
+        #         prefill_tokens += tokens_scheduled
+        #         generated_tokens = 0  # prefill 중에는 아직 생성 안됨
+        #     else:
+        #         phase = 'decode'
+        #         decode_count += 1
+        #         decode_tokens += tokens_scheduled
+        #         # 🆕 생성된 토큰 수 = 전체 computed tokens - prompt tokens
+        #         generated_tokens = kv_cache_len_before - request.num_prompt_tokens
+            
+        #     total_scheduled_tokens += tokens_scheduled
+            
+        #     request_details.append({
+        #         'request_id': req.req_id,
+        #         'phase': phase,
+        #         'kv_cache_len': kv_cache_len_before,
+        #         'scheduled_tokens': tokens_scheduled,
+        #         'total_prompt_len': request.num_prompt_tokens,
+        #         'generated_tokens': generated_tokens  # 🆕 생성된 토큰 수
+        #     })
+        
+        # total_requests = len(scheduler_output.scheduled_new_reqs) + len(scheduler_output.scheduled_cached_reqs)
+        
+        # return {
+        #     'total_scheduled_requests': total_requests,
+        #     'total_scheduled_tokens': total_scheduled_tokens,
+        #     'prefill_requests': prefill_count,
+        #     'decode_requests': decode_count,
+        #     'prefill_tokens': prefill_tokens,
+        #     'decode_tokens': decode_tokens,
+        #     'request_details': request_details
+        # }
+        
+        return {
+            'total_scheduled_requests': 0,
+            'total_scheduled_tokens': 0,
+            'prefill_requests': 0,
+            'decode_requests': 0,
+            'prefill_tokens': 0,
+            'decode_tokens': 0,
+            'request_details': {}
+        }
+
+    
+    
     def step(self) -> EngineCoreOutputs:
         """Schedule, execute, and make output."""
 
@@ -200,9 +283,16 @@ class EngineCore:
                 scheduler_stats=self.scheduler.make_stats(),
             )
         scheduler_output = self.scheduler.schedule()
+        # scheduling_details = self._collect_scheduling_details(scheduler_output)
+        
         output = self.model_executor.execute_model(scheduler_output)
         engine_core_outputs = self.scheduler.update_from_output(
             scheduler_output, output)  # type: ignore
+        
+        
+        # if engine_core_outputs and scheduling_details:
+        #     first_output = next(iter(engine_core_outputs.outputs), None)
+        #     first_output.scheduling_details = scheduling_details
 
         return engine_core_outputs
 

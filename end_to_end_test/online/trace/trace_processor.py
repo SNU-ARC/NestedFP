@@ -37,6 +37,69 @@ def extend_request_rate(input_file, output_file, n_copies, time_offset_us):
 
     print(f"[extend_request_rate] Expanded {len(df)} rows → {len(expanded_df)} rows → {output_file}")
 
+
+def scale_request_rate(input_file, output_file, scale_factor, seed=42):
+    """
+    확률적 샘플링을 통해 요청 비율을 조절합니다.
+    시간 분포 패턴은 유지하면서 전체 요청 수만 줄입니다.
+    
+    Args:
+        input_file: 입력 CSV 파일
+        output_file: 출력 CSV 파일
+        scale_factor: 스케일 팩터 (0.2 = 20%만 유지, 0.5 = 50%만 유지)
+        seed: 랜덤 시드 (재현성을 위해)
+    """
+    # 랜덤 시드 설정
+    np.random.seed(seed)
+    
+    # 파일 로드
+    print(f"파일 '{input_file}' 로드 중...")
+    df = pd.read_csv(input_file)
+    df['TIMESTAMP'] = pd.to_datetime(df['TIMESTAMP'], format='mixed', utc=True)
+    
+    # 원본 정보
+    original_count = len(df)
+    original_duration = (df['TIMESTAMP'].max() - df['TIMESTAMP'].min()).total_seconds()
+    original_rate = original_count / original_duration
+    
+    print(f"원본 요청 수: {original_count}")
+    print(f"원본 기간: {original_duration:.2f} 초")
+    print(f"원본 평균 요청 비율: {original_rate:.2f} requests/second")
+    
+    # 정확한 개수 유지 방식으로 샘플링 (더 안정적)
+    n_keep = int(original_count * scale_factor)
+    if n_keep == 0:
+        n_keep = 1  # 최소 1개는 유지
+    
+    # 시간 순서를 유지하면서 랜덤 선택
+    keep_indices = np.random.choice(original_count, n_keep, replace=False)
+    keep_indices = np.sort(keep_indices)
+    df_scaled = df.iloc[keep_indices].copy()
+    
+    print(f"선택된 요청 수: {n_keep} / {original_count} ({n_keep/original_count*100:.1f}%)")
+    
+    # 인덱스 리셋
+    df_scaled.reset_index(drop=True, inplace=True)
+    
+    # 결과 저장
+    df_scaled.to_csv(output_file, index=False)
+    
+    # 결과 정보 출력
+    scaled_count = len(df_scaled)
+    scaled_duration = original_duration  # 시간 구간은 동일
+    scaled_rate = scaled_count / scaled_duration
+    
+    print(f"\n=== 스케일링 결과 ===")
+    print(f"[scale_request_rate] Scale factor: {scale_factor}")
+    print(f"[scale_request_rate] Original requests: {original_count}")
+    print(f"[scale_request_rate] Scaled requests: {scaled_count}")
+    print(f"[scale_request_rate] New duration: {scaled_duration:.2f} seconds")
+    print(f"[scale_request_rate] Average rate: {scaled_rate:.2f} requests/second")
+    print(f"[scale_request_rate] Saved to: {output_file}")
+    
+    return df_scaled
+
+
 def clip_rows(input_file, output_file, n_rows):
     df = pd.read_csv(input_file)
     df_short = df.iloc[:n_rows]
@@ -293,12 +356,11 @@ def main():
     parser.add_argument('--n_rows', type=int)
     parser.add_argument('--rate_multiplier', type=int, default=3, help="Rate multiplier for extend_high_rate task")
     parser.add_argument('--duration_seconds', type=int, help="Duration for high rate extension (optional)")
-    
-    # [NEW]
+    parser.add_argument('--scale_factor', type=float, help="Scale factor for scale_request_rate task (e.g., 0.2, 0.4)")
     parser.add_argument('--bin_interval_ms', type=int, default=1000, help="Bin interval for plot_request_rate")
     parser.add_argument('--moving_avg_window_s', type=float, default=10, help="Moving average window size in seconds for plot_request_rate")
 
-    parser.add_argument('--task', type=str, required=True, choices=['clip_day', 'extend_rate', 'clip_rows', 'plot_request_rate', 'extend_high_rate', 'analyze_variability', 'plot_request_rate_raw'],
+    parser.add_argument('--task', type=str, required=True, choices=['clip_day', 'extend_rate', 'clip_rows', 'plot_request_rate', 'extend_high_rate', 'analyze_variability', 'plot_request_rate_raw', 'scale_request_rate'],
                     help="Task to perform...")
 
     args = parser.parse_args()
@@ -328,6 +390,11 @@ def main():
     
     elif args.task == 'plot_request_rate_raw':
         plot_request_rate_raw(args.input)
+        
+    elif args.task == 'scale_request_rate':
+        if args.scale_factor is None:
+            raise ValueError("scale_factor must be specified for scale_request_rate task.")
+        scale_request_rate(args.input, args.output, args.scale_factor)
 
 if __name__ == "__main__":
     main()

@@ -3,18 +3,19 @@ import argparse
 import pandas as pd
 import numpy as np
 import time
-from typing import List, Optional, Dict
+from typing import Optional
 from datetime import datetime
-import io
 import json
 import os
 import sys
 import traceback
+import re
 from dataclasses import dataclass, field
-from tqdm.asyncio import tqdm
 import aiohttp
+from transformers import AutoTokenizer
+import random
+import matplotlib.pyplot as plt
 
-# 기존 코드에서 정의한 데이터 클래스 (수정된 버전)
 @dataclass
 class RequestFuncInput:
     prompt: str
@@ -23,63 +24,57 @@ class RequestFuncInput:
     output_len: int
     model: str
     model_name: Optional[str] = None
-    logprobs: Optional[int] = None
-    extra_body: Optional[dict] = None
-    multi_modal_content: Optional[dict] = None
-    ignore_eos: bool = False
-    language: Optional[str] = None
-
 
 @dataclass
 class RequestFuncOutput:
     generated_text: str = ""
     success: bool = False
     latency: float = 0.0
-    output_tokens: int = 0
-    ttft: float = 0.0  # Time to first token
-    itl: list[float] = field(default_factory=list)  # list of inter-token latencies
-    tpot: float = 0.0  # avg next-token latencies
+    ttft: float = 0.0
+    itl: list[float] = field(default_factory=list)
+    tpot: float = 0.0
     prompt_len: int = 0
     error: str = ""
-    # 새로 추가: 토큰 도착 시간 기록
     token_arrival_times: list[float] = field(default_factory=list)
     request_sent_time: float = 0.0
     request_completed_time: float = 0.0
+    # 새로 추가: iteration 정보
+    iteration_data: list[dict] = field(default_factory=list)
 
-# OpenAI 호환 Completions API 요청 함수 (수정된 버전)
+# 전역 변수들
+ttft_graph = {'iteration_step': [], 'ttft': []}
+iter_tpot_graph = {}  # {iteration_total: [token_latencies]}
+iter_kv_graph = {}  # {iteration_total: [kv_cache_usage]}
+iter_kv_gb_graph = {}  # {iteration_total: [kv_cache_usage_gb]}
+iter_kv_total_capacity_graph = {}  # {iteration_total: [kv_cache_total_capacity]}
+iter_num_prefill_graph = {}  # {iteration_total: [num_prefill]}
+iter_num_decode_graph = {}  # {iteration_total: [num_decode]}
+
+# 🆕 iteration별 상세 정보 수집용 전역 변수
+iteration_details = {}  # {iteration_total: {...}}
+iteration_lock = asyncio.Lock()  # async 환경에서 안전한 접근을 위한 락
+
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
-    pbar: Optional[tqdm] = None,
 ) -> RequestFuncOutput:
     api_url = request_func_input.api_url
-    assert api_url.endswith(
-        ("completions", "profile")
-    ), "OpenAI Completions API URL must end with 'completions' or 'profile'."
+    assert api_url.endswith(("completions", "profile")), \
+        "OpenAI Completions API URL must end with 'completions' or 'profile'."
 
     AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-    async with aiohttp.ClientSession(trust_env=True,
-                                     timeout=AIOHTTP_TIMEOUT) as session:
+    async with aiohttp.ClientSession(trust_env=True, timeout=AIOHTTP_TIMEOUT) as session:
         payload = {
-            "model": request_func_input.model_name \
-                if request_func_input.model_name else request_func_input.model,
+            "model": request_func_input.model_name or request_func_input.model,
             "prompt": request_func_input.prompt,
             "temperature": 0.0,
             "repetition_penalty": 1.0,
             "max_tokens": request_func_input.output_len,
-            "logprobs": request_func_input.logprobs,
             "stream": True,
-            "stream_options": {
-                "include_usage": True,
-            },
+            "stream_options": {"include_usage": True},
+            "ignore_eos": True,
         }
-        if request_func_input.ignore_eos:
-            payload["ignore_eos"] = request_func_input.ignore_eos
-        if request_func_input.extra_body:
-            payload.update(request_func_input.extra_body)
         
-        # vLLM 서버가 인증이 필요 없는 경우 빈 헤더로 설정
         headers = {}
-        # OpenAI API를 사용하는 경우 API 키 설정
         openai_api_key = os.environ.get('OPENAI_API_KEY')
         if openai_api_key:
             headers["Authorization"] = f"Bearer {openai_api_key}"
@@ -89,12 +84,11 @@ async def async_request_openai_completions(
 
         generated_text = ""
         st = time.perf_counter()
-        output.request_sent_time = st  # 요청 전송 시간 기록
-        most_recent_timestamp = st
+        output.request_sent_time = st
+        previous_timestamp = None  # 🆕 ITL 계산을 위한 이전 timestamp 추적
         
         try:
-            async with session.post(url=api_url, json=payload,
-                                    headers=headers) as response:
+            async with session.post(url=api_url, json=payload, headers=headers) as response:
                 if response.status == 200:
                     first_chunk_received = False
                     async for chunk_bytes in response.content:
@@ -102,55 +96,110 @@ async def async_request_openai_completions(
                         if not chunk_bytes:
                             continue
 
-                        chunk = chunk_bytes.decode("utf-8").removeprefix(
-                            "data: ")
+                        chunk = chunk_bytes.decode("utf-8").removeprefix("data: ")
                         if chunk != "[DONE]":
                             data = json.loads(chunk)
 
-                            # NOTE: Some completion API might have a last
-                            # usage summary response without a token so we
-                            # want to check a token was generated
                             if choices := data.get("choices"):
-                                # Note that text could be empty here
-                                # e.g. for special tokens
                                 text = choices[0].get("text")
-                                timestamp = time.perf_counter()
+                                timestamp = choices[0].get("iteration_timestamp")
+                                iteration_total = choices[0].get("iteration_total")
+                                kv_cache_usage = choices[0].get("kv_cache_usage")
+                                kv_cache_usage_gb = choices[0].get("kv_cache_usage_gb")
+                                kv_cache_total_capacity = choices[0].get("kv_cache_total_capacity")
+                                num_prefill = choices[0].get("num_prefill")
+                                num_decode = choices[0].get("num_decode")
+                                # 서버에서 온 새로운 스케줄링 정보들
+                                total_scheduled_requests = choices[0].get("total_scheduled_requests")
+                                total_scheduled_tokens = choices[0].get("total_scheduled_tokens")
+                                prefill_requests = choices[0].get("prefill_requests") 
+                                decode_requests = choices[0].get("decode_requests")
+                                prefill_tokens = choices[0].get("prefill_tokens")
+                                decode_tokens = choices[0].get("decode_tokens")
+                                request_details = choices[0].get("request_details", [])
                                 
-                                # 각 토큰 도착 시간 기록 (빈 텍스트도 포함)
+                                # iteration 정보 저장 (기존 - RequestFuncOutput용)
+                                if timestamp is not None and iteration_total is not None:
+                                    output.iteration_data.append({
+                                        "iteration_total": iteration_total,
+                                        "timestamp": timestamp,
+                                        "kv_cache_usage": kv_cache_usage,
+                                        "text": text or ""
+                                    })
+                                
+                                # 🆕 단순화된 iteration별 상세 정보 수집
+                                if iteration_total is not None:
+                                    async with iteration_lock:
+                                        if iteration_total not in iteration_details:
+                                            iteration_details[iteration_total] = {
+                                                "iteration_total": iteration_total,
+                                                "timestamp": timestamp,
+                                                "tokens_generated": 0,
+                                                "kv_cache_usage": kv_cache_usage,
+                                                "kv_cache_usage_gb": kv_cache_usage_gb,
+                                                "kv_cache_total_capacity": kv_cache_total_capacity,
+                                                "total_scheduled_requests": total_scheduled_requests,
+                                                "total_scheduled_tokens": total_scheduled_tokens,
+                                                "prefill_requests": prefill_requests,
+                                                "decode_requests": decode_requests,
+                                                "prefill_tokens": prefill_tokens,
+                                                "decode_tokens": decode_tokens,
+                                                "request_details": request_details,
+                                                "itl": None,  # 🆕 단일 ITL 값
+                                            }
+                                        
+                                        # 기존 iteration이면 최신 정보로 업데이트
+                                        iter_data = iteration_details[iteration_total]
+                                        iter_data["timestamp"] = timestamp
+                                        iter_data["tokens_generated"] += 1
+                                        
+                                        # 🆕 ITL 계산 (이전 토큰과의 시간차)
+                                        if previous_timestamp is not None:
+                                            itl = timestamp - previous_timestamp
+                                            iter_data["itl"] = itl
+                                
                                 output.token_arrival_times.append(timestamp)
                                 
-                                # First token
                                 if not first_chunk_received:
                                     first_chunk_received = True
                                     ttft = timestamp - st
+                                    print(f'{st} to {timestamp}: so ttft is {ttft}')
                                     output.ttft = ttft
-
-                                # Decoding phase
+                                    ttft_graph['iteration_step'].append(iteration_total)
+                                    ttft_graph['ttft'].append(ttft)
                                 else:
-                                    output.itl.append(timestamp -
-                                                     most_recent_timestamp)
+                                    output.itl.append(timestamp - previous_timestamp if previous_timestamp else 0)
+                                    
+                                # 🔄 기존 그래프 데이터 수집 (호환성 유지)
+                                if iteration_total is not None and previous_timestamp is not None:
+                                    token_latency = timestamp - previous_timestamp
+                                    if iteration_total not in iter_tpot_graph:
+                                        iter_tpot_graph[iteration_total] = []
+                                    iter_tpot_graph[iteration_total].append(token_latency)
+                                    
+                                iter_kv_graph[iteration_total] = [kv_cache_usage]
+                                iter_kv_gb_graph[iteration_total] = [kv_cache_usage_gb]
+                                iter_kv_total_capacity_graph[iteration_total] = [kv_cache_total_capacity]
+                                iter_num_prefill_graph[iteration_total] = [num_prefill]
+                                iter_num_decode_graph[iteration_total] = [num_decode]
 
-                                most_recent_timestamp = timestamp
+                                # 🆕 이전 timestamp 업데이트
+                                if timestamp is not None:
+                                    previous_timestamp = timestamp
+                                    
                                 generated_text += text or ""
-                            elif usage := data.get("usage"):
-                                output.output_tokens = usage.get(
-                                    "completion_tokens")
                     
-                    output.request_completed_time = time.perf_counter()  # 요청 완료 시간 기록
+                    output.request_completed_time = time.perf_counter()
                     
                     if first_chunk_received:
                         output.success = True
+                        output.generated_text = generated_text
+                        output.latency = output.request_completed_time - st
+                        if output.itl:
+                            output.tpot = sum(output.itl) / len(output.itl)
                     else:
                         output.success = False
-                        output.error = (
-                            "Never received a valid chunk to calculate TTFT."
-                            "This response will be marked as failed!")
-                    output.generated_text = generated_text
-                    output.latency = output.request_completed_time - st
-                    
-                    # TPOT 계산 추가
-                    if output.itl:
-                        output.tpot = sum(output.itl) / len(output.itl)
+                        output.error = "Never received a valid chunk to calculate TTFT."
                 else:
                     output.error = response.reason or ""
                     output.success = False
@@ -159,517 +208,686 @@ async def async_request_openai_completions(
             exc_info = sys.exc_info()
             output.error = "".join(traceback.format_exception(*exc_info))
 
-    if pbar:
-        pbar.update(1)
-    return output
+        return output
 
-# 임의의 프롬프트를 생성하는 함수
-def generate_random_prompt(token_length):
-    # "A"를 반복하여 정확한 토큰 길이 생성
-    # 대부분의 토크나이저에서 "A"는 단일 토큰으로 처리됨
-    return "A " * token_length
 
-# 평균 request rate 계산 함수
-def calculate_average_request_rate(trace_df):
-    """trace 데이터에서 평균 request rate을 계산"""
-    if len(trace_df) < 2:
-        return 0.0
+# 🆕 iteration 상세 정보 후처리 함수
+def process_iteration_details():
+    """수집된 iteration 정보를 후처리하여 최종 형태로 변환"""
+    processed_iterations = []
     
-    # 첫 번째와 마지막 요청 간의 시간 간격
-    total_duration = trace_df['relative_time'].max() - trace_df['relative_time'].min()
+    for iteration_total in sorted(iteration_details.keys()):
+        iter_data = iteration_details[iteration_total]
+        
+        # 🆕 단순화된 구조
+        processed_iter = {
+            "iteration_total": iteration_total,
+            "timestamp": iter_data["timestamp"],  # 🆕 단일 timestamp
+            "tokens_generated": iter_data["tokens_generated"],
+            
+            # 스케줄링 정보
+            "total_scheduled_requests": iter_data["total_scheduled_requests"],
+            "total_scheduled_tokens": iter_data["total_scheduled_tokens"],
+            "prefill_requests": iter_data["prefill_requests"], 
+            "decode_requests": iter_data["decode_requests"],
+            "prefill_tokens": iter_data["prefill_tokens"],
+            "decode_tokens": iter_data["decode_tokens"],
+            
+            # KV cache 정보
+            "kv_cache_usage": iter_data["kv_cache_usage"],
+            "kv_cache_usage_gb": iter_data["kv_cache_usage_gb"],
+            "kv_cache_total_capacity": iter_data["kv_cache_total_capacity"],
+            # 🆕 ITL (Inter-Token Latency) - 단일 값
+            "itl": iter_data["itl"],
+            # 요청별 세부 정보
+            "request_details": iter_data["request_details"]
+        }
+        
+        processed_iterations.append(processed_iter)
     
-    if total_duration <= 0:
-        return 0.0
-    
-    # 요청 간격들의 평균 계산
-    time_diffs = trace_df['relative_time'].diff().dropna()
-    if len(time_diffs) == 0:
-        return 0.0
-    
-    avg_interval = time_diffs.mean()
-    avg_rate = 1.0 / avg_interval if avg_interval > 0 else 0.0
-    
-    return avg_rate
+    return processed_iterations
 
-# trace 파일에서 고정된 수의 요청 로드 (alpha 매개변수 추가)
-def load_trace_data(file_path, alpha=1.0, num_requests=200):
-    # CSV 파일에서 데이터 로드
+
+# 기존 함수들은 그대로 유지...
+def pregenerate_prompts(trace_df, tokenizer_name="Qwen/Qwen2.5-7B"):
+    """효율적으로 정확한 토큰 길이의 프롬프트 생성"""
+    print(f"Pre-generating prompts using tokenizer: {tokenizer_name}")
+    start_time = time.time()
+
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+   
+    # 간단한 단어 풀
+    words = ["hello", "world", "test", "data", "model", "training", "computer", "science",
+            "artificial", "intelligence", "machine", "learning", "neural", "network",
+            "transformer", "attention", "embedding", "layer", "parameter", "gradient",
+            "system", "processing", "algorithm", "function", "method", "class", "object",
+            "memory", "storage", "database", "server", "client", "protocol", "interface"]
+   
+    prompts = []
+    
+    for idx, row in trace_df.iterrows():
+        target_tokens = row['CONTEXT_TOKENS']
+        
+        # request별 다른 시드 사용 (KV Cache 다양성 확보)
+        random.seed(idx)
+        
+        # 충분히 긴 프롬프트 생성 (target_tokens의 1.5배 정도)
+        selected_words = random.choices(words, k=target_tokens * 2)
+        prompt = " ".join(selected_words)
+        
+        # 토큰 길이 확인 및 조정
+        encoded = tokenizer.encode(prompt, add_special_tokens=False)
+        
+        if len(encoded) > target_tokens:
+            # 토큰 단위로 정확히 자르기
+            truncated_tokens = encoded[:target_tokens]
+            prompt = tokenizer.decode(truncated_tokens)
+        elif len(encoded) < target_tokens:
+            # 부족한 경우 단어 더 추가
+            while len(encoded) < target_tokens:
+                additional_word = random.choice(words)
+                test_prompt = prompt + " " + additional_word
+                test_encoded = tokenizer.encode(test_prompt, add_special_tokens=False)
+                if len(test_encoded) <= target_tokens:
+                    prompt = test_prompt
+                    encoded = test_encoded
+                else:
+                    break
+        
+        prompts.append(prompt)
+        
+        if (idx + 1) % 100 == 0:
+            print(f"Generated {idx + 1}/{len(trace_df)} prompts")
+    
+    # 검증
+    print("\nValidating generated prompts...")
+    mismatches = 0
+    for i, (prompt, target_length) in enumerate(zip(prompts, trace_df['CONTEXT_TOKENS'])):
+        actual_length = len(tokenizer.encode(prompt, add_special_tokens=False))
+        if actual_length != target_length:
+            mismatches += 1
+            if mismatches <= 5:
+                print(f"Mismatch at index {i}: target={target_length}, actual={actual_length}")
+    
+    generation_time = time.time() - start_time
+    print(f"Prompt generation completed in {generation_time:.2f}s")
+    print(f"Token length mismatches: {mismatches}/{len(prompts)}")
+    
+    return prompts
+
+def load_trace_data(file_path, num_requests=None, duration_minutes=None):
+    """
+    Trace 데이터를 로드하고 필터링
+    
+    Args:
+        file_path: CSV 파일 경로
+        num_requests: 사용할 요청 개수 (legacy, duration_minutes와 함께 사용 불가)
+        duration_minutes: 실험 지속 시간 (분 단위)
+    """
     df = pd.read_csv(file_path)
-    
-    # 타임스탬프를 datetime 객체로 변환
     df['TIMESTAMP'] = pd.to_datetime(df.iloc[:, 0])
-    
-    # 열 이름 재설정 (첫 번째 열이 타임스탬프, 두 번째 열이 컨텍스트 토큰, 세 번째 열이 생성된 토큰)
     df.columns = ['TIMESTAMP', 'CONTEXT_TOKENS', 'GENERATED_TOKENS']
     
-    # 고정된 수의 요청만 선택 (위에서부터)
-    if len(df) > num_requests:
-        df = df.head(num_requests)
-        print(f"Using first {num_requests} requests from trace file")
-    else:
-        print(f"Warning: Only {len(df)} requests available, using all of them")
-    
-    # 첫 번째 타임스탬프를 기준으로 상대적 시간(초) 계산
+    # 상대 시간 계산
     first_timestamp = df['TIMESTAMP'].min()
-    # alpha 값을 적용하여 상대적 시간 조절
-    # alpha < 1: 요청 간격이 늘어남 (느려짐), alpha > 1: 요청 간격이 줄어듦 (빨라짐)
-    df['relative_time'] = (df['TIMESTAMP'] - first_timestamp).dt.total_seconds() / alpha
+    df['relative_time'] = (df['TIMESTAMP'] - first_timestamp).dt.total_seconds()
     
-    # 평균 request rate 계산 및 출력
-    original_rate = calculate_average_request_rate(df)
-    adjusted_rate = original_rate * alpha  # alpha 적용된 rate
+    # trace 데이터의 총 지속 시간 계산
+    total_duration_seconds = df['relative_time'].max()
+    total_duration_minutes = total_duration_seconds / 60
     
-    print(f"Original trace request rate: {original_rate:.2f} req/s")
-    print(f"Alpha-adjusted request rate: {adjusted_rate:.2f} req/s")
+    print(f"Trace file loaded: {len(df)} total requests")
+    print(f"Trace duration: {total_duration_minutes:.2f} minutes ({total_duration_seconds:.2f} seconds)")
     
-    return df
+    # 두 파라미터가 모두 제공된 경우 에러
+    if num_requests is not None and duration_minutes is not None:
+        raise ValueError("Cannot specify both num_requests and duration_minutes. Please use only one.")
+    
+    # duration_minutes 기준으로 필터링
+    if duration_minutes is not None:
+        target_duration_seconds = duration_minutes * 60
+        
+        # 요청한 시간이 trace 데이터보다 긴 경우 에러
+        if target_duration_seconds > total_duration_seconds:
+            raise ValueError(f"Requested duration ({duration_minutes} minutes) exceeds trace data duration ({total_duration_minutes:.2f} minutes)")
+        
+        # 지정된 시간 내의 요청만 필터링
+        filtered_df = df[df['relative_time'] <= target_duration_seconds].copy()
+        
+        print(f"Using {duration_minutes} minutes of trace data: {len(filtered_df)} requests")
+        print(f"Actual duration used: {filtered_df['relative_time'].max():.2f} seconds")
+        
+        return filtered_df
+    
+    # num_requests 기준으로 필터링 (legacy 지원)
+    elif num_requests is not None:
+        if len(df) > num_requests:
+            df = df.head(num_requests)
+            print(f"Using first {num_requests} requests from trace file")
+            print(f"Duration of selected requests: {df['relative_time'].max():.2f} seconds ({df['relative_time'].max()/60:.2f} minutes)")
+        else:
+            print(f"Using all {len(df)} requests from trace file")
+        
+        return df
+    
+    # 아무것도 지정되지 않은 경우 모든 데이터 사용
+    else:
+        print(f"Using all {len(df)} requests from trace file")
+        return df
 
-# 단일 요청 실행 함수 (수정된 버전)
-async def execute_single_request(request_input, api_url, model_name, request_id):
-    # RequestFuncInput 객체 생성
+async def execute_single_request_with_prompt(request_input, prompt, api_url, model_name, request_id):
+    """미리 생성된 프롬프트를 사용하는 버전"""
     input_obj = RequestFuncInput(
-        prompt=generate_random_prompt(request_input['CONTEXT_TOKENS']),
+        prompt=prompt,  # 미리 생성된 프롬프트 사용
         api_url=api_url,
         prompt_len=request_input['CONTEXT_TOKENS'],
         output_len=request_input['GENERATED_TOKENS'],
         model=model_name
     )
     
-    # vLLM API 호출 (OpenAI 호환 방식)
     result = await async_request_openai_completions(input_obj)
-    
-    # request_id 추가
     return result, request_id
 
-# trace 기반의 모든 요청 실행 (수정된 버전)
-async def execute_trace_based_requests(trace_df, api_url, model_name):
+async def execute_trace_based_requests(trace_df, prompts, api_url, model_name):
     results = []
-    start_time = time.time()
+    start_time = time.perf_counter()
     
     print(f"Starting trace-based test with {len(trace_df)} requests")
-    if len(trace_df) > 0:
-        total_duration = trace_df['relative_time'].max()
-        print(f"Estimated duration: {total_duration:.2f} seconds")
     
     for idx, row in trace_df.iterrows():
-        # 현재 시간
-        current_time = time.time() - start_time
-        # trace 파일의 상대적 시간
         target_time = row['relative_time']
         
-        # 필요한 경우 대기
-        if current_time < target_time:
-            await asyncio.sleep(target_time - current_time)
+        # 정확한 시간까지 대기
+        while True:
+            current_time = time.perf_counter() - start_time
+            if current_time >= target_time:
+                break
+            await asyncio.sleep(0.001)  # 1ms 간격으로 체크
         
-        # 비동기로 요청 전송 (request_id 추가)
-        task = asyncio.create_task(execute_single_request(row, api_url, model_name, idx))
+        # 요청 전송
+        task = asyncio.create_task(
+            execute_single_request_with_prompt(row, prompts[idx], api_url, model_name, idx)
+        )
         results.append((task, row, idx))
         
-        send_time = time.time() - start_time
-        print(f"Request {idx+1}/{len(trace_df)} sent at {send_time:.2f}s: "
-              f"Context tokens={row['CONTEXT_TOKENS']}, Generated tokens={row['GENERATED_TOKENS']}")
+        send_time = time.perf_counter() - start_time
+        print(f"Request {idx+1}/{len(trace_df)} sent at {send_time:.6f}s (target: {target_time:.6f}s)")
     
     print(f"All requests sent. Waiting for responses...")
     
-    # 모든 요청 완료 대기 및 결과 수집
     final_results = []
     for task, row, request_id in results:
         result, _ = await task
+        
+        actual_generated_tokens = len(result.itl) + 1 if result.success and result.itl else 0
+        
         final_results.append({
             'request_id': request_id,
             'context_tokens': row['CONTEXT_TOKENS'],
             'generated_tokens': row['GENERATED_TOKENS'],
+            'actual_generated_tokens': actual_generated_tokens,
             'success': result.success,
             'latency': result.latency,
             'ttft': result.ttft,
             'tpot': result.tpot,
             'error': result.error,
-            # 새로 추가된 필드들
             'request_sent_time': result.request_sent_time,
             'request_completed_time': result.request_completed_time,
-            'token_arrival_times': result.token_arrival_times  # 모든 토큰 도착시간
+            'token_arrival_times': result.token_arrival_times,
+            'itl': result.itl,
+            'iteration_data': result.iteration_data
         })
-    
-    total_duration = time.time() - start_time
-    print(f"Experiment completed in {total_duration:.2f}s")
     
     return final_results
 
-# 토큰 도착 시간 데이터를 CSV 형태로 변환
-def convert_to_token_arrival_csv(results):
-    """각 request별로 하나의 row, 토큰 도착 시간을 별도 컬럼으로"""
-    rows = []
-    max_tokens = max(len(r['token_arrival_times']) for r in results if r['success'])
-    
-    for result in results:
-        if not result['success']:
-            continue
-            
-        row = {
-            'request_id': result['request_id'],
-            'context_tokens': result['context_tokens'],
-            'generated_tokens': result['generated_tokens'],
-            'request_sent_time': result['request_sent_time'],
-            'request_completed_time': result['request_completed_time'],
-            'total_latency': result['latency'],
-            'ttft': result['ttft'],
-            'tpot': result['tpot']
-        }
-        
-        # 토큰 도착 시간들을 별도 컬럼으로 추가
-        for i, arrival_time in enumerate(result['token_arrival_times']):
-            row[f'token_{i+1}_arrival_time'] = arrival_time
-        
-        # 나머지 토큰 컬럼은 빈 값으로 채움
-        for i in range(len(result['token_arrival_times']), max_tokens):
-            row[f'token_{i+1}_arrival_time'] = None
-            
-        rows.append(row)
-    
-    return pd.DataFrame(rows)
+# 기존 그래프 생성 함수들은 그대로 유지...
+def save_ttft_plot(dic, x, y, file_name):
+    df = pd.DataFrame(dic)
+    if len(df) > 0:
+        df = df.sort_values(x)
+        plt.figure(figsize=(10, 6))
+        plt.plot(df[x], df[y], '-', linewidth=1, alpha=0.6, color='lightblue')
+        plt.scatter(df[x], df[y], s=50, alpha=0.9, color='red', edgecolors='darkred', linewidth=1)
+        plt.xlabel('First Token Iteration Step')  # 의미있는 라벨
+        plt.ylabel('TTFT [s]')
+        plt.title('TTFT by First Token Iteration Step')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f'{file_name}.png', dpi=1000)
+        plt.close()
 
-# 각 토큰별 상세 정보를 위한 테이블 생성 (시간대별 P90 ITL 분석용)
-def create_token_level_table(results):
-    """각 토큰별로 하나의 row를 생성 (ITL 포함)"""
-    token_rows = []
+def save_num_data_plots(iter_dict, file_name, data_name):
+    """서버 iteration step별 num_prefill or num_decode 그래프 저장"""
+    if not iter_dict:
+        print(f"No {data_name} data to plot")
+        return
     
-    for result in results:
-        if not result['success'] or len(result['token_arrival_times']) == 0:
-            continue
-            
-        # 첫 번째 토큰은 ITL이 없음 (TTFT만 존재)
-        token_rows.append({
-            'request_id': result['request_id'],
-            'token_index': 0,
-            'token_arrival_time': result['token_arrival_times'][0],
-            'itl': None,  # 첫 번째 토큰은 ITL이 없음
-            'cumulative_tokens': 1,
-            'is_first_token': True
-        })
-        
-        # 나머지 토큰들의 ITL 계산
-        for i in range(1, len(result['token_arrival_times'])):
-            itl = result['token_arrival_times'][i] - result['token_arrival_times'][i-1]
-            token_rows.append({
-                'request_id': result['request_id'],
-                'token_index': i,
-                'token_arrival_time': result['token_arrival_times'][i],
-                'itl': itl,
-                'cumulative_tokens': i + 1,
-                'is_first_token': False
-            })
+    iterations = []
+    latencies = []
     
-    return pd.DataFrame(token_rows)
+    for iteration_step in sorted(iter_dict.keys()):
+        step_latencies = iter_dict[iteration_step]
+        for latency in step_latencies:
+            iterations.append(iteration_step)
+            latencies.append(latency)
+    
+    if not iterations:
+        print(f"No valid {data_name} data to plot")
+        return
+    
+    # 단일 그래프 생성 (선으로 연결)
+    plt.figure(figsize=(12, 6))
+    plt.plot(iterations, latencies, 'o-', markersize=4, linewidth=1, alpha=0.7, color='blue')
+    plt.xlabel('Server Iteration Step')
+    plt.ylabel(f'{data_name} [number]')
+    plt.title(f'{data_name} by Iteration Step')
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(f'{file_name}.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"{data_name} saved to {file_name}.png")
+    
+    # 간단한 통계 정보 출력
+    print(f"\n{data_name} usage Statistics:")
+    print(f"Total iteration steps executed: {len(iter_dict)}")  # 실제 실행된 iteration step 횟수
+    print(f"Unique iteration step range: {min(iterations)} - {max(iterations)}")
+    if latencies:
+        print(f"Average {data_name} usage: {np.mean(latencies):.4f}s")
+        print(f"Min {data_name} usage: {min(latencies):.4f}s")
+        print(f"Max {data_name} usage: {max(latencies):.4f}s")
 
-# 시간대별 P90 ITL 계산
-def calculate_p90_itl_over_time(token_df, interval_seconds=1.0):
-    """시간대별 P90 ITL 계산"""
-    if token_df.empty:
-        return pd.DataFrame()
+def save_kv_plots(iter_dict, file_name):
+    """서버 iteration step별 kv_cache_usage 그래프 저장"""
+    if not iter_dict:
+        print("No kv usage data to plot")
+        return
     
-    # 첫 번째 토큰은 제외 (ITL이 None)
-    itl_tokens = token_df[token_df['itl'].notna()].copy()
+    iterations = []
+    latencies = []
     
-    if itl_tokens.empty:
-        return pd.DataFrame()
+    for iteration_step in sorted(iter_dict.keys()):
+        step_latencies = iter_dict[iteration_step]
+        for latency in step_latencies:
+            iterations.append(iteration_step)
+            latencies.append(latency)
     
-    # 기준 시간 (가장 빠른 토큰 도착 시간)
-    min_time = itl_tokens['token_arrival_time'].min()
-    max_time = itl_tokens['token_arrival_time'].max()
+    if not iterations:
+        print("No valid TPOT data to plot")
+        return
     
-    # 시간 구간 생성
-    time_bins = np.arange(min_time, max_time + interval_seconds, interval_seconds)
+    # 단일 그래프 생성 (선으로 연결)
+    plt.figure(figsize=(12, 6))
+    plt.plot(iterations, latencies, 'o-', markersize=4, linewidth=1, alpha=0.7, color='blue')
+    plt.xlabel('Server Iteration Step')
+    plt.ylabel('kv cache usage [ratio]')
+    plt.title('kv cache usage by Iteration Step')
+    plt.grid(True, alpha=0.3)
     
-    # 각 토큰을 시간 구간에 할당
-    itl_tokens['time_bin'] = pd.cut(itl_tokens['token_arrival_time'], bins=time_bins, right=False)
+    plt.tight_layout()
+    plt.savefig(f'{file_name}.png', dpi=300, bbox_inches='tight')
+    plt.close()
     
-    # 각 시간 구간별 P90 ITL 계산
-    p90_results = []
+    print(f"kv plot saved to {file_name}.png")
     
-    for bin_label, group in itl_tokens.groupby('time_bin'):
-        if group.empty:
-            continue
-            
-        bin_start = bin_label.left
-        bin_end = bin_label.right
-        itl_values = group['itl'].values
-        
-        if len(itl_values) > 0:
-            p90_itl = np.percentile(itl_values, 90)
-            p50_itl = np.percentile(itl_values, 50)
-            avg_itl = np.mean(itl_values)
-            token_count = len(itl_values)
-            request_count = group['request_id'].nunique()
-            
-            p90_results.append({
-                'time_interval_start': bin_start,
-                'time_interval_end': bin_end,
-                'time_interval_center': (bin_start + bin_end) / 2,
-                'p90_itl': p90_itl,
-                'p50_itl': p50_itl,
-                'avg_itl': avg_itl,
-                'token_count': token_count,
-                'request_count': request_count
-            })
-    
-    return pd.DataFrame(p90_results)
+    # 간단한 통계 정보 출력
+    print(f"\nkv cache usage Statistics:")
+    print(f"Total iteration steps executed: {len(iter_dict)}")  # 실제 실행된 iteration step 횟수
+    print(f"Unique iteration step range: {min(iterations)} - {max(iterations)}")
+    if latencies:
+        print(f"Average kv cache usage: {np.mean(latencies):.4f}s")
+        print(f"Min kv cache usage: {min(latencies):.4f}s")
+        print(f"Max kv cache usage: {max(latencies):.4f}s")
 
-# 시간대별 Request Rate 계산 (새로 추가)
-def calculate_request_rate_over_time(results, interval_seconds=1.0):
-    """시간대별 Request Rate 계산"""
-    if not results:
-        return pd.DataFrame()
+def save_tpot_plots(iter_dict, file_name):
+    """서버 iteration step별 token latency 그래프 저장"""
+    if not iter_dict:
+        print("No TPOT data to plot")
+        return
     
-    # 성공한 요청들의 전송 시간 추출
-    request_times = []
-    for result in results:
-        if result['success']:
-            request_times.append({
-                'request_id': result['request_id'],
-                'request_sent_time': result['request_sent_time']
-            })
+    # iteration step과 해당 latency 데이터 준비
+    iterations = []
+    latencies = []
     
-    if not request_times:
-        return pd.DataFrame()
+    for iteration_step in sorted(iter_dict.keys()):
+        step_latencies = iter_dict[iteration_step]
+        for latency in step_latencies:
+            iterations.append(iteration_step)
+            latencies.append(latency)
     
-    request_df = pd.DataFrame(request_times)
+    if not iterations:
+        print("No valid TPOT data to plot")
+        return
     
-    # 기준 시간 (가장 빠른 요청 전송 시간)
-    min_time = request_df['request_sent_time'].min()
-    max_time = request_df['request_sent_time'].max()
+    # 단일 그래프 생성 (선으로 연결)
+    plt.figure(figsize=(12, 6))
+    plt.plot(iterations, latencies, 'o-', markersize=4, linewidth=1, alpha=0.7, color='blue')
+    plt.xlabel('Server Iteration Step')
+    plt.ylabel('Token Latency [s]')
+    plt.title('Token Latency by Iteration Step')
+    plt.grid(True, alpha=0.3)
     
-    # 시간 구간 생성
-    time_bins = np.arange(min_time, max_time + interval_seconds, interval_seconds)
+    plt.tight_layout()
+    plt.savefig(f'{file_name}.png', dpi=300, bbox_inches='tight')
+    plt.close()
     
-    # 각 요청을 시간 구간에 할당
-    request_df['time_bin'] = pd.cut(request_df['request_sent_time'], bins=time_bins, right=False)
+    print(f"TPOT plot saved to {file_name}.png")
     
-    # 각 시간 구간별 요청 개수 계산
-    rate_results = []
-    
-    for bin_label, group in request_df.groupby('time_bin'):
-        if group.empty:
-            continue
-            
-        bin_start = bin_label.left
-        bin_end = bin_label.right
-        request_count = len(group)
-        request_rate = request_count / interval_seconds  # 초당 요청 수
-        
-        rate_results.append({
-            'time_interval_start': bin_start,
-            'time_interval_end': bin_end,
-            'time_interval_center': (bin_start + bin_end) / 2,
-            'request_count': request_count,
-            'request_rate': request_rate,
-            'interval_seconds': interval_seconds
-        })
-    
-    return pd.DataFrame(rate_results)
+    # 간단한 통계 정보 출출
+    print(f"\nTPOT Statistics:")
+    print(f"Total iteration steps executed: {len(iter_dict)}")  # 실제 실행된 iteration step 횟수
+    print(f"Unique iteration step range: {min(iterations)} - {max(iterations)}")
+    print(f"Total tokens processed: {len(latencies)}")  # 생성된 총 토큰 개수
+    if latencies:
+        print(f"Average token latency: {np.mean(latencies):.4f}s")
+        print(f"Min token latency: {min(latencies):.4f}s")
+        print(f"Max token latency: {max(latencies):.4f}s")
 
-# 성능 통계 계산 함수 (기존과 동일)
-def calculate_performance_stats(results):
-    success_count = sum(1 for r in results if r['success'])
+def create_performance_scatter_plots(results, middle_ratio=0.8):
+    """
+    TTFT vs TPOT 산포도 생성 및 성능 통계 계산
     
+    Args:
+        results: 실험 결과 리스트
+        middle_ratio: 중간 구간 비율 (0.8이면 앞뒤 10%씩 제거하고 중간 80% 사용)
+    """
+    
+    # 성공한 요청들의 데이터만 추출 (request_id 순서로 정렬)
+    successful_results = [r for r in results if r['success']]
+    successful_results.sort(key=lambda x: x['request_id'])  # request_id 순서로 정렬
+    
+    total_count = len(results)
+    success_count = len(successful_results)
+    
+    print(f"Completed {success_count}/{total_count} requests successfully")
+    
+    if not successful_results:
+        print("No successful results to plot or calculate stats")
+        return {}, success_count
+    
+    # 중간 구간 계산
+    if middle_ratio >= 1.0 or middle_ratio <= 0:
+        print(f"Warning: Invalid middle_ratio {middle_ratio}, using all data")
+        filtered_results = successful_results
+        start_idx = 0
+        end_idx = len(successful_results)
+    else:
+        total_successful = len(successful_results)
+        skip_count = int(total_successful * (1 - middle_ratio) / 2)
+        start_idx = skip_count
+        end_idx = total_successful - skip_count
+        filtered_results = successful_results[start_idx:end_idx]
+    
+    print(f"Using middle {middle_ratio*100}% of data: requests {start_idx} to {end_idx-1} (total: {len(filtered_results)})")
+    
+    if not filtered_results:
+        print("No data remaining after filtering")
+        return {}, success_count
+    
+    # 필터링된 데이터에서 통계 계산
+    latency_values = [r['latency'] for r in filtered_results]
+    ttft_values = [r['ttft'] for r in filtered_results if r['ttft'] > 0]
+    tpot_values = [r['tpot'] for r in filtered_results if r['tpot'] > 0]
+    
+    # 통계 계산
     stats = {}
+    stats['filtered_count'] = len(filtered_results)
+    stats['filter_range'] = f"{start_idx}-{end_idx-1}"
+    stats['avg_latency'] = np.mean(latency_values)
     
-    if success_count > 0:
-        # 지연 시간 통계
-        latency_values = [r['latency'] for r in results if r['success']]
-        stats['avg_latency'] = np.mean(latency_values)
-        
-        # TTFT 통계
-        ttft_values = [r['ttft'] for r in results if r['success'] and r['ttft'] > 0]
-        if ttft_values:
-            stats['avg_ttft'] = np.mean(ttft_values)
-            stats['p25_ttft'] = np.percentile(ttft_values, 25)
-            stats['p50_ttft'] = np.percentile(ttft_values, 50)
-            stats['p75_ttft'] = np.percentile(ttft_values, 75)
-            stats['p90_ttft'] = np.percentile(ttft_values, 90)
-            stats['p99_ttft'] = np.percentile(ttft_values, 99)
-        
-        # TPOT 통계
-        tpot_values = [r['tpot'] for r in results if r['success'] and r['tpot'] > 0]
-        if tpot_values:
-            stats['avg_tpot'] = np.mean(tpot_values)
-            stats['p25_tpot'] = np.percentile(tpot_values, 25)
-            stats['p50_tpot'] = np.percentile(tpot_values, 50)
-            stats['p75_tpot'] = np.percentile(tpot_values, 75)
-            stats['p90_tpot'] = np.percentile(tpot_values, 90)
-            stats['p99_tpot'] = np.percentile(tpot_values, 99)
+    if ttft_values:
+        stats['avg_ttft'] = np.mean(ttft_values)
+        stats['p90_ttft'] = np.percentile(ttft_values, 90)
+        stats['p99_ttft'] = np.percentile(ttft_values, 99)
+    
+    if tpot_values:
+        stats['avg_tpot'] = np.mean(tpot_values)
+        stats['p90_tpot'] = np.percentile(tpot_values, 90)
+        stats['p99_tpot'] = np.percentile(tpot_values, 99)
+    
+    # 통계 출력
+    print(f"\n--- Performance Statistics (Middle {middle_ratio*100}% of requests) ---")
+    print(f"Filtered data range: requests {start_idx} to {end_idx-1} ({len(filtered_results)} requests)")
+    print(f"Average latency: {stats.get('avg_latency', 0):.4f}s")
+    if 'avg_ttft' in stats:
+        print(f"Average TTFT: {stats['avg_ttft']:.4f}s")
+        print(f"P90 TTFT: {stats['p90_ttft']:.4f}s")
+        print(f"P99 TTFT: {stats['p99_ttft']:.4f}s")
+    if 'avg_tpot' in stats:
+        print(f"Average TPOT: {stats['avg_tpot']:.4f}s")
+        print(f"P90 TPOT: {stats['p90_tpot']:.4f}s")
+        print(f"P99 TPOT: {stats['p99_tpot']:.4f}s")
+    
+    # 산포도를 위한 페어 데이터 (필터링된 결과만 사용)
+    paired_data = [(r['tpot'], r['ttft']) for r in filtered_results 
+                   if r['ttft'] > 0 and r['tpot'] > 0]  # x=TPOT, y=TTFT
+    
+    if not paired_data:
+        print("No paired TTFT/TPOT data to plot")
+        return stats, success_count
+    
+    paired_tpot, paired_ttft = zip(*paired_data)
+    
+    # 축 범위 계산 (여유있게)
+    tpot_max = max(paired_tpot)
+    ttft_max = max(paired_ttft)
+    tpot_min = min(paired_tpot)
+    ttft_min = min(paired_ttft)
+    
+    tpot_margin = (tpot_max - tpot_min) * 0.1  # 10% 여유
+    ttft_margin = (ttft_max - ttft_min) * 0.1  # 10% 여유
+    
+    # 단일 산포도 생성
+    plt.figure(figsize=(12, 8))  # 범례가 들어갈 공간을 위해 너비를 조금 늘림
+    plt.scatter(paired_tpot, paired_ttft, alpha=0.7, s=50, color='blue', edgecolors='darkblue', linewidth=0.5)
+    plt.xlabel('TPOT [s]')
+    plt.ylabel('TTFT [s]')
+    plt.title(f'TTFT vs TPOT Scatter Plot (Middle {middle_ratio*100}% of requests)')
+    plt.grid(True, alpha=0.3)
+    
+    # 축 범위 설정 (여유있게)
+    x_min, x_max = tpot_min - tpot_margin, tpot_max + tpot_margin
+    y_min, y_max = ttft_min - ttft_margin, ttft_max + ttft_margin
+    plt.xlim(x_min, x_max)
+    plt.ylim(y_min, y_max)
+    
+    # 평균값과 P90 값 계산
+    avg_tpot = np.mean(paired_tpot)
+    avg_ttft = np.mean(paired_ttft)
+    p90_tpot = np.percentile(paired_tpot, 90)
+    p90_ttft = np.percentile(paired_ttft, 90)
+    
+    # 평균선 추가 (실선)
+    plt.axvline(avg_tpot, color='red', linestyle='-', alpha=0.8, linewidth=2, 
+                label=f'Avg TPOT: {avg_tpot:.3f}s')
+    plt.axhline(avg_ttft, color='green', linestyle='-', alpha=0.8, linewidth=2, 
+                label=f'Avg TTFT: {avg_ttft:.3f}s')
+    
+    # P90 선 추가 (점선)
+    plt.axvline(p90_tpot, color='red', linestyle='--', alpha=0.8, linewidth=2, 
+                label=f'P90 TPOT: {p90_tpot:.3f}s')
+    plt.axhline(p90_ttft, color='green', linestyle='--', alpha=0.8, linewidth=2, 
+                label=f'P90 TTFT: {p90_ttft:.3f}s')
+    
+    # 범례 위치 조정 (그래프 밖으로 배치)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    
+    # 파일 저장
+    scatter_file = f"performance_scatter_middle_{int(middle_ratio*100)}pct.png"
+    plt.savefig(scatter_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Performance scatter plot saved to {scatter_file}")
+    
+    # 추가 통계 정보 출력
+    print(f"\nDetailed Performance Statistics (Filtered Data):")
+    print(f"TTFT - Mean: {np.mean(ttft_values):.4f}s, Std: {np.std(ttft_values):.4f}s")
+    print(f"TPOT - Mean: {np.mean(tpot_values):.4f}s, Std: {np.std(tpot_values):.4f}s")
+    if len(paired_data) > 1:
+        correlation = np.corrcoef(paired_tpot, paired_ttft)[0, 1]
+        print(f"TTFT-TPOT Correlation: {correlation:.4f}")
     
     return stats, success_count
 
-# 단일 alpha 값에 대한 실험 실행 (수정된 버전)
-async def run_experiment_with_alpha(alpha, trace_file, api_url, model_name, num_requests=200, p90_interval=1.0):
-    print(f"\n--- Running experiment with alpha={alpha:.2f} ---")
-    print(f"Loading {num_requests} requests from trace data with rate multiplier alpha={alpha:.2f}")
-    trace_df = load_trace_data(trace_file, alpha, num_requests)
-    print(f"Loaded {len(trace_df)} requests from trace file")
+async def run_experiment(trace_file, api_url, model_name, num_requests=None, duration_minutes=None, middle_ratio=0.8):
+    """
+    실험 실행
     
-    # trace 기반 요청 실행
-    results = await execute_trace_based_requests(trace_df, api_url, model_name)
+    Args:
+        trace_file: trace 파일 경로
+        api_url: API URL
+        model_name: 모델 이름
+        num_requests: 사용할 요청 개수 (legacy)
+        duration_minutes: 실험 지속 시간 (분 단위)
+        middle_ratio: 성능 분석용 중간 구간 비율
+    """
+    print(f"\n--- Running trace-based experiment ---")
     
-    # 성능 통계 계산
-    stats, success_count = calculate_performance_stats(results)
-    print(f"Completed {success_count}/{len(results)} requests successfully")
+    # 🆕 전역 변수 초기화
+    global iteration_details
+    iteration_details.clear()
     
-    # 실제 달성된 request rate 계산
-    if results:
-        experiment_duration = max(r['request_completed_time'] for r in results if r['success']) - min(r['request_sent_time'] for r in results if r['success']) if success_count > 0 else 0
-        actual_rate = len(results) / experiment_duration if experiment_duration > 0 else 0
-        print(f"Actual achieved request rate: {actual_rate:.2f} req/s")
+    # trace 데이터 로드
+    trace_df = load_trace_data(trace_file, num_requests=num_requests, duration_minutes=duration_minutes)
     
-    # 성능 통계 출력
-    if stats:
-        print(f"Average latency: {stats.get('avg_latency', 0):.4f}s")
-        
-        if 'avg_ttft' in stats:
-            print("\nTTFT Statistics:")
-            print(f"Average TTFT: {stats['avg_ttft']:.4f}s")
-            print(f"P25 TTFT: {stats['p25_ttft']:.4f}s")
-            print(f"P50 TTFT: {stats['p50_ttft']:.4f}s")
-            print(f"P75 TTFT: {stats['p75_ttft']:.4f}s")
-            print(f"P90 TTFT: {stats['p90_ttft']:.4f}s")
-            print(f"P99 TTFT: {stats['p99_ttft']:.4f}s")
-        
-        if 'avg_tpot' in stats:
-            print("\nTPOT Statistics:")
-            print(f"Average TPOT: {stats['avg_tpot']:.4f}s")
-            print(f"P25 TPOT: {stats['p25_tpot']:.4f}s")
-            print(f"P50 TPOT: {stats['p50_tpot']:.4f}s")
-            print(f"P75 TPOT: {stats['p75_tpot']:.4f}s")
-            print(f"P90 TPOT: {stats['p90_tpot']:.4f}s")
-            print(f"P99 TPOT: {stats['p99_tpot']:.4f}s")
+    # 실험 정보 출력
+    if duration_minutes is not None:
+        print(f"Experiment setup: {duration_minutes} minutes, {len(trace_df)} requests")
+    elif num_requests is not None:
+        print(f"Experiment setup: {num_requests} requests, {trace_df['relative_time'].max()/60:.2f} minutes")
     else:
-        print("No valid statistics available")
+        print(f"Experiment setup: {len(trace_df)} requests, {trace_df['relative_time'].max()/60:.2f} minutes")
     
-    # 파일 저장
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prompts = pregenerate_prompts(trace_df, tokenizer_name=model_name)
     
-    # 1. 토큰 도착 시간 CSV 저장
-    token_arrival_df = convert_to_token_arrival_csv(results)
-    token_csv_file = f"token_arrivals_alpha{alpha:.2f}_{timestamp}.csv"
-    token_arrival_df.to_csv(token_csv_file, index=False)
-    print(f"\nToken arrival times saved to {token_csv_file}")
-    print(f"Shape: {token_arrival_df.shape}")
+    experiment_start_time = time.perf_counter()
+    print(f"Experiment started at {experiment_start_time:.6f}s")
+    results = await execute_trace_based_requests(trace_df, prompts, api_url, model_name)
+    experiment_end_time = time.perf_counter()
+    print(f"Experiment completed at {experiment_end_time:.6f}s")
     
-    # 2. 토큰별 상세 데이터 생성 및 저장
-    token_level_df = create_token_level_table(results)
-    token_level_file = f"token_level_data_alpha{alpha:.2f}_{timestamp}.csv"
-    token_level_df.to_csv(token_level_file, index=False)
-    print(f"Token-level data saved to {token_level_file}")
-    print(f"Shape: {token_level_df.shape}")
-    
-    # 3. 시간대별 P90 ITL 계산 및 저장
-    p90_itl_df = calculate_p90_itl_over_time(token_level_df, interval_seconds=p90_interval)
-    p90_file = f"p90_itl_over_time_alpha{alpha:.2f}_{timestamp}.csv"
-    p90_itl_df.to_csv(p90_file, index=False)
-    print(f"P90 ITL over time saved to {p90_file}")
-    print(f"Shape: {p90_itl_df.shape}")
-    print(f"Time interval: {p90_interval} seconds")
-    
-    # 4. 시간대별 Request Rate 계산 및 저장 (새로 추가)
-    request_rate_df = calculate_request_rate_over_time(results, interval_seconds=p90_interval)
-    request_rate_file = f"request_rate_count_alpha{alpha:.2f}_{timestamp}.csv"
-    request_rate_df.to_csv(request_rate_file, index=False)
-    print(f"Request rate over time saved to {request_rate_file}")
-    print(f"Shape: {request_rate_df.shape}")
-    
-    # 5. 기존 형태의 결과 파일도 저장
-    results_file = f"benchmark_results_alpha{alpha:.2f}_{timestamp}.json"
+    # Request 별 결과 저장
+    results_file = f"benchmark_request.json"
     with open(results_file, 'w') as f:
         json.dump(results, f, indent=2)
-    print(f"Detailed results saved to {results_file}")
+    print(f"Results with iteration data saved to {results_file}")
     
-    return alpha, stats, success_count, len(results)
+    
+    # Iteration 별 결과 저장.
+    processed_iterations = process_iteration_details()
+    iteration_file = f"benchmark_iteration.json"
+    with open(iteration_file, 'w') as f:
+        json.dump(processed_iterations, f, indent=2)
+    print(f"Iteration details saved to {iteration_file}")
+    
+    
+    # 🆕 iteration 통계 출력
+    print(f"\n--- Iteration Statistics ---")
+    print(f"Total iterations executed: {len(processed_iterations)}")
+    if processed_iterations:
+        total_tokens = sum(iter_data['tokens_generated'] for iter_data in processed_iterations)
+        avg_tokens_per_iter = total_tokens / len(processed_iterations)
+        print(f"Total tokens generated: {total_tokens}")
+        print(f"Average tokens per iteration: {avg_tokens_per_iter:.2f}")
+        
+        # 스케줄링 통계
+        avg_scheduled_reqs = np.mean([iter_data.get('total_scheduled_requests', 0) for iter_data in processed_iterations if iter_data.get('total_scheduled_requests') is not None])
+        avg_scheduled_tokens = np.mean([iter_data.get('total_scheduled_tokens', 0) for iter_data in processed_iterations if iter_data.get('total_scheduled_tokens') is not None])
+        avg_prefill_reqs = np.mean([iter_data.get('prefill_requests', 0) for iter_data in processed_iterations if iter_data.get('prefill_requests') is not None])
+        avg_prefill_tokens = np.mean([iter_data.get('prefill_tokens', 0) for iter_data in processed_iterations if iter_data.get('prefill_tokens') is not None])
+        avg_decode_reqs = np.mean([iter_data.get('decode_requests', 0) for iter_data in processed_iterations if iter_data.get('decode_requests') is not None])
+        avg_decode_tokens = np.mean([iter_data.get('decode_tokens', 0) for iter_data in processed_iterations if iter_data.get('decode_tokens') is not None])
+        
+        avg_kv_usage = np.mean([iter_data.get('kv_cache_usage', 0) for iter_data in processed_iterations if iter_data.get('kv_cache_usage') is not None])
+        avg_kv_usage_gb = np.mean([iter_data.get('kv_cache_usage_gb', 0) for iter_data in processed_iterations if iter_data.get('kv_cache_usage_gb') is not None])
+        avg_kv_total_capacity = np.mean([iter_data.get('kv_cache_total_capacity', 0) for iter_data in processed_iterations if iter_data.get('kv_cache_total_capacity') is not None])
+        
+        
+        print(f"Average scheduled requests per iteration: {avg_scheduled_reqs:.2f}")
+        print(f"Average scheduled tokens per iteration: {avg_scheduled_tokens:.2f}")
+        print(f"Average prefill requests per iteration: {avg_prefill_reqs:.2f}")
+        print(f"Average prefill tokens per iteration: {avg_prefill_tokens:.2f}")
+        print(f"Average decode requests per iteration: {avg_decode_reqs:.2f}")
+        print(f"Average decode tokens per iteration: {avg_decode_tokens:.2f}")
+        
+        print(f"Average kv cache usage per iteration: {avg_kv_usage:.4f}"
+              f" (GB: {avg_kv_usage_gb:.4f}, Total Capacity: {avg_kv_total_capacity:.4f})")
+    
+    # iteration 데이터 요약 출력 (기존)
+    total_tokens = sum(len(r['iteration_data']) for r in results if r['success'])
+    print(f"Total tokens generated: {total_tokens}")
+    print(f"Total Experiment Time: {experiment_end_time - experiment_start_time:.2f}s")
+    
+    # Store the Total Experiment Time and Total Requests
+    with open("benchmark_summary.json", 'w') as f:
+        summary = {
+            "total_experiment_time": experiment_end_time - experiment_start_time,
+            "total_requests": len(results),
+            "successful_requests": sum(1 for r in results if r['success']),
+            "failed_requests": sum(1 for r in results if not r['success'])
+        }
+        json.dump(summary, f, indent=2)
+    print(f"Summary saved to benchmark_summary.json")
+    
+    return results
 
-# 여러 알파 값에 대한 실험 실행 (기존과 동일)
-async def run_experiments(alphas, trace_file, api_url, model_name, num_requests=200):
-    summary_results = []
-    
-    # 첫 번째 실험 전에 원본 trace의 평균 request rate 계산
-    print("Loading trace file to calculate original request rate...")
-    original_df = pd.read_csv(trace_file)
-    original_df['TIMESTAMP'] = pd.to_datetime(original_df.iloc[:, 0])
-    original_df.columns = ['TIMESTAMP', 'CONTEXT_TOKENS', 'GENERATED_TOKENS']
-    
-    if len(original_df) > num_requests:
-        original_df = original_df.head(num_requests)
-    
-    first_timestamp = original_df['TIMESTAMP'].min()
-    original_df['relative_time'] = (original_df['TIMESTAMP'] - first_timestamp).dt.total_seconds()
-    original_rate = calculate_average_request_rate(original_df)
-    
-    print(f"\nOriginal trace statistics:")
-    print(f"Total number of requests: {len(original_df)}")
-    print(f"Time span: {original_df['relative_time'].max():.2f} seconds")
-    print(f"Average request rate: {original_rate:.2f} req/s")
-    print(f"Using {num_requests} requests for experiments\n")
-    
-    for alpha in alphas:
-        alpha_result = await run_experiment_with_alpha(alpha, trace_file, api_url, model_name, num_requests)
-        summary_results.append(alpha_result)
-    
-    # 전체 결과 요약 CSV 저장
-    summary_df = []
-    for alpha, stats, success_count, total_count in summary_results:
-        if stats:
-            adjusted_rate = original_rate * alpha
-            row = {
-                'alpha': alpha, 
-                'target_rate': adjusted_rate,
-                'success_rate': success_count / total_count,
-                'total_requests': total_count
-            }
-            row.update(stats)
-            summary_df.append(row)
-    
-    if summary_df:
-        summary_df = pd.DataFrame(summary_df)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        summary_file = f"benchmark_summary_{timestamp}.csv"
-        summary_df.to_csv(summary_file, index=False)
-        print(f"\nSummary results saved to {summary_file}")
-    
-    return summary_df
-
-# 메인 함수 (기존과 동일)
 async def main():
-    parser = argparse.ArgumentParser(description="vLLM trace-based benchmark client (token arrival tracking)")
+    parser = argparse.ArgumentParser(description="vLLM trace-based benchmark client")
     parser.add_argument("--trace-file", 
-                       default="/disk/dualfp_vllm_test/end_to_end_test/online/trace/trace_0510.csv",
+                       default="./trace/azure_conv_0514_1400_20min_15.0x_tc.csv",
                        help="Path to trace CSV file")
     parser.add_argument("--api-url", 
                        default="http://0.0.0.0:8000/v1/completions", 
                        help="vLLM server API URL")
     parser.add_argument("--model", 
-                       default="/disk/models/Mistral-Small-24B-Base-2501",
+                       default="Qwen/Qwen2.5-7B",
                        help="Model name or path")
-    parser.add_argument("--alpha", 
-                       type=float, 
-                       default=1,
-                       help="Request rate multiplier. If not provided, will run multiple alphas")
     parser.add_argument("--num-requests", 
                        type=int, 
-                       default=5000,
-                       help="Number of requests to use for the experiment")
+                       default=None,
+                       help="Number of requests to use (legacy mode)")
+    parser.add_argument("--duration-minutes", 
+                       type=float, 
+                       default=None,
+                       help="Duration of experiment in minutes (preferred over num-requests)")
+    parser.add_argument("--middle-ratio", 
+                       type=float, 
+                       default=0.7,
+                       help="Ratio of middle data to use for performance stats (default: 0.5)")
+    
     args = parser.parse_args()
     
-    # API URL이 completions으로 끝나는지 확인하고, 필요한 경우 수정
+    # 두 파라미터가 모두 없는 경우 기본값 설정
+    if args.num_requests is None and args.duration_minutes is None:
+        args.duration_minutes = 20.0  # 기본값: 20 minutes
+        print("No duration or num_requests specified, using default: 20 minutes")
+    
+    # 두 파라미터가 모두 제공된 경우 에러
+    if args.num_requests is not None and args.duration_minutes is not None:
+        print("Error: Cannot specify both --num-requests and --duration-minutes. Please use only one.")
+        return
+    
     if not args.api_url.endswith(("completions", "profile")):
         if not args.api_url.endswith('/'):
             args.api_url += '/v1/completions'
         else:
             args.api_url += 'v1/completions'
     
-    # 단일 알파 또는 여러 알파 값으로 실험 실행
-    if args.alpha is not None:
-        await run_experiment_with_alpha(args.alpha, args.trace_file, args.api_url, args.model, args.num_requests)
-    else:
-        alphas = [0.04, 0.08, 0.12, 0.16, 0.2, 0.24, 0.28, 0.32, 0.36, 0.4]
-        summary_df = await run_experiments(alphas, args.trace_file, args.api_url, args.model, args.num_requests)
+    try:
+        await run_experiment(
+            args.trace_file, 
+            args.api_url, 
+            args.model, 
+            num_requests=args.num_requests,
+            duration_minutes=args.duration_minutes,
+            middle_ratio=args.middle_ratio
+        )
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
 
-# 스크립트 실행
 if __name__ == "__main__":
     asyncio.run(main())

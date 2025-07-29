@@ -49,8 +49,13 @@ class KVCacheManager:
         # N new empty blocks.
         self.num_preallocate_tokens = num_preallocate_tokens
         self.num_preallocate_blocks = cdiv(num_preallocate_tokens, block_size)
+        
+        
+        #TO DO
+        page_size_bytes = None
+        num_layers = None
 
-        self.block_pool = BlockPool(num_gpu_blocks, enable_caching)
+        self.block_pool = BlockPool(num_gpu_blocks, enable_caching, page_size_bytes, num_layers)
 
         # Mapping from request ID to blocks to track the blocks allocated
         # for each request, so that we can free the blocks when the request

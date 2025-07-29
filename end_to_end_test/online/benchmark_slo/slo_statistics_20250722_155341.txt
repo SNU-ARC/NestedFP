@@ -1,0 +1,131 @@
+============================================================
+SLO BENCHMARK ANALYSIS REPORT
+============================================================
+
+EXPERIMENT INFORMATION:
+------------------------------
+trace_file: /home2/omin/FAServe/online/trace/azure_conv_0514_1400_20min_15.0x_tc.csv
+api_url: http://0.0.0.0:9000/v1/completions
+model_name: Qwen/Qwen2.5-7B
+num_requests_used: 500
+duration_minutes: None
+experiment_start_time: 2828828.607374693
+experiment_end_time: 2829516.643645774
+total_experiment_time: 688.036271081306
+Analysis generated at: 2025-07-22 15:53:41
+
+SUMMARY STATISTICS:
+------------------------------
+Total Requests: 500
+Successful Requests: 500
+Failed Requests: 0
+Success Rate: 100.00%
+
+TTFT (SECONDS):
+------------------------------
+Count: 500
+Mean: 0.130209
+Median: 0.084312
+Std Dev: 0.120512
+Min: 0.017887
+Max: 0.657758
+P10: 0.031347
+P25: 0.047451
+P75: 0.179896
+P90: 0.284318
+P95: 0.390557
+P99: 0.566359
+
+TPOT (SECONDS):
+------------------------------
+Count: 500
+Mean: 0.011575
+Median: 0.011512
+Std Dev: 0.000228
+Min: 0.011125
+Max: 0.012581
+P10: 0.011355
+P25: 0.011416
+P75: 0.011660
+P90: 0.011940
+P95: 0.012046
+P99: 0.012287
+
+LATENCY (SECONDS):
+------------------------------
+Count: 500
+Mean: 1.375348
+Median: 0.551970
+Std Dev: 1.875948
+Min: 0.047154
+Max: 9.792756
+P10: 0.163063
+P25: 0.269749
+P75: 1.287243
+P90: 4.647704
+P95: 5.658234
+P99: 7.500233
+
+CONTEXT TOKENS:
+------------------------------
+Count: 500
+Mean: 1610.756000
+Median: 1083.500000
+Std Dev: 1515.933918
+Min: 53.000000
+Max: 7934.000000
+P10: 280.900000
+P25: 547.750000
+P75: 2229.750000
+P90: 3622.800000
+P95: 4815.200000
+P99: 6811.950000
+
+GENERATED TOKENS (TARGET):
+------------------------------
+Count: 500
+Mean: 108.662000
+Median: 42.000000
+Std Dev: 157.598908
+Min: 3.000000
+Max: 793.000000
+P10: 3.000000
+P25: 14.000000
+P75: 107.000000
+P90: 381.200000
+P95: 469.300000
+P99: 615.270000
+
+ACTUAL GENERATED TOKENS:
+------------------------------
+Count: 500
+Mean: 108.662000
+Median: 42.000000
+Std Dev: 157.598908
+Min: 3.000000
+Max: 793.000000
+P10: 3.000000
+P25: 14.000000
+P75: 107.000000
+P90: 381.200000
+P95: 469.300000
+P99: 615.270000
+
+SLO SUGGESTIONS:
+------------------------------
+5x Multiplier:
+  TTFT SLO: 0.651045 seconds
+  TPOT SLO: 0.057874 seconds
+10x Multiplier:
+  TTFT SLO: 1.302091 seconds
+  TPOT SLO: 0.115748 seconds
+15x Multiplier:
+  TTFT SLO: 1.953136 seconds
+  TPOT SLO: 0.173623 seconds
+20x Multiplier:
+  TTFT SLO: 2.604181 seconds
+  TPOT SLO: 0.231497 seconds
+25x Multiplier:
+  TTFT SLO: 3.255227 seconds
+  TPOT SLO: 0.289371 seconds
+

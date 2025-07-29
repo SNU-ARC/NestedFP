@@ -5,6 +5,43 @@ import cutlass
 dualfp_lib = torch.library.Library("dualfp", "DEF")
 
 
+# 글로벌 상태 관리 클래스
+class DualFPGlobalState:
+    """Global state manager for DualFP quantization mode switching"""
+    _use_dualfp = False  # DualFP 사용 여부
+    _use_fp8 = True      # DualFP 사용시 fp8/fp16 모드
+    
+    @classmethod
+    def set_dualfp_mode(cls, enable: bool):
+        """Enable/disable DualFP quantization"""
+        cls._use_dualfp = enable
+    
+    @classmethod 
+    def get_dualfp_mode(cls):
+        """Get current DualFP mode"""
+        return cls._use_dualfp
+    
+    @classmethod
+    def set_fp8_mode(cls, enable: bool):
+        """Set fp8/fp16 mode when DualFP is enabled"""
+        cls._use_fp8 = enable
+    
+    @classmethod 
+    def get_fp8_mode(cls):
+        """Get current fp8/fp16 mode"""
+        return cls._use_fp8
+    
+    @classmethod
+    def set_modes(cls, use_dualfp: bool, use_fp8: bool):
+        """Set both modes simultaneously"""
+        cls._use_dualfp = use_dualfp
+        cls._use_fp8 = use_fp8
+    
+    @classmethod
+    def get_modes(cls):
+        """Get both modes as tuple (use_dualfp, use_fp8)"""
+        return cls._use_dualfp, cls._use_fp8
+
 @torch.library.custom_op("dualfp::fp16_baseline", mutates_args=({}))
 def fp16_baseline(
     M: int,
