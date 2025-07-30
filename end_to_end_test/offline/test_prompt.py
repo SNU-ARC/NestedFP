@@ -48,10 +48,10 @@ def test_model_generation(model_path, output_file):
         llm = LLM(
             model=model_path,
             dtype="float16",
-            # quantization="nestedfp",
-            max_model_len=4096,       # Limit context length
-            tensor_parallel_size=8,
-            # enforce_eager=True        # Eager execution for better debugging
+            quantization="dualfp",
+            # max_model_len=4096,       # Limit context length
+            tensor_parallel_size=4,
+            enforce_eager=True        # Eager execution for better debugging
         )
         
         # Set sampling parameters
@@ -122,9 +122,10 @@ def main():
     print(f"Using GPU {idle_gpu}")
     
     # Set model path and output file
-    # model_path = "/disk2/models/Mistral-Small-24B-Base-2501"
+    # model_path = "/disk2/models/Mistral-Small-24B-Instruct-2501"
+    # model_path = "/disk2/models/DeepSeek-R1-Distill-Llama-70B""
     model_path = "/disk2/models/Llama-3.1-70B"
-    output_file = "llama_3_1_70B_generation_results.csv"
+    output_file = "test_results.csv"
 
     # Safely handle exceptions
     try:

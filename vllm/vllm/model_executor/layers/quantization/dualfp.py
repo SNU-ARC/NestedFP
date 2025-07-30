@@ -114,21 +114,86 @@ class DUALFPLinearMethod(LinearMethodBase):
         assert(bias is None)
         
         # 글로벌 상태에서 모드 가져오기
-        current_dualfp_enabled = DualFPGlobalState.get_dualfp_mode()
-        current_fp8_mode = DualFPGlobalState.get_fp8_mode()
+        current_dualfp_enabled = self.is_dualfp_enabled
+        # current_fp8_mode = DualFPGlobalState.get_fp8_mode()
+        current_fp8_mode = self.fp8
+
+        
+        # def fp16_to_fp8(x, dtype=torch.float8_e4m3fn):
+        #     finfo = torch.finfo(torch.float8_e4m3fn)
+        #     scale = finfo.max / x.abs().max().clamp(min=1e-12)
+        #     x_scl_sat = (x * scale).clamp(min=finfo.min, max=finfo.max)
+        #     x8 = x_scl_sat.to(torch.float8_e4m3fn)
+        #     scale_factor = scale.float().reciprocal()
+        #     return x8, scale_factor
+        
         
         def fp16_to_fp8(x, dtype=torch.float8_e4m3fn):
             finfo = torch.finfo(torch.float8_e4m3fn)
-            scale = finfo.max / x.abs().max().clamp(min=1e-12)
+            
+            if x.dim() >= 2:
+                # Per-token scaling: 각 토큰별로 독립적인 scale 계산
+                x_abs_max = x.abs().amax(dim=-1, keepdim=True)
+                
+                # Outlier 처리: 99.9% percentile clipping
+                if x_abs_max.numel() > 1:
+                    # quantile 함수를 위해 float32로 변환
+                    percentile_max = torch.quantile(x_abs_max.flatten().float(), 0.999)
+                    x_abs_max = torch.minimum(x_abs_max, percentile_max.to(x_abs_max.dtype))
+                
+                # Per-token scale 계산
+                scale = finfo.max / x_abs_max.clamp(min=1e-12)
+            else:
+                # 1D tensor의 경우 global scaling
+                scale = finfo.max / x.abs().max().clamp(min=1e-12)
+            
+            # Scaling 및 saturation
             x_scl_sat = (x * scale).clamp(min=finfo.min, max=finfo.max)
             x8 = x_scl_sat.to(torch.float8_e4m3fn)
-            scale_factor = scale.float().reciprocal()
+            
+            # scale_factor를 원래 x의 dtype으로 유지
+            scale_factor = scale.reciprocal().to(x.dtype)
+            
             return x8, scale_factor
         
+        def fp16_to_fp8_stable(x, dtype=torch.float8_e4m3fn):
+            finfo = torch.finfo(torch.float8_e4m3fn)
+            
+            if x.dim() >= 2:
+                x_abs_max = x.abs().amax(dim=-1, keepdim=True)
+                
+                # NaN/Inf 체크
+                if torch.any(torch.isnan(x_abs_max)) or torch.any(torch.isinf(x_abs_max)):
+                    print("WARNING: NaN or Inf detected in x_abs_max!")
+                    x_abs_max = torch.nan_to_num(x_abs_max, nan=1.0, posinf=1.0, neginf=1.0)
+                
+                # 극단적으로 작은 값들을 더 안전하게 처리
+                x_abs_max = torch.where(x_abs_max < 1e-5, 
+                                    torch.full_like(x_abs_max, 1e-5), 
+                                    x_abs_max)
+                
+                # Conservative scaling
+                scale = (finfo.max * 0.7) / x_abs_max
+                
+                # Scale 범위 강제 제한
+                scale = torch.clamp(scale, min=0.1, max=50.0)
+                
+            else:
+                x_abs_max = x.abs().max()
+                x_abs_max = max(x_abs_max.item(), 1e-5)
+                scale = (finfo.max * 0.7) / x_abs_max
+                scale = torch.clamp(scale, min=0.1, max=50.0)
+            
+            x_scl_sat = (x * scale).clamp(min=finfo.min, max=finfo.max)
+            x8 = x_scl_sat.to(dtype)
+            scale_factor = scale.reciprocal().to(x.dtype)
+            
+            return x8, scale_factor
+                
         # self.fp8 → current_fp8_mode, self.is_dualfp_enabled → current_dualfp_enabled 로 변경
         if current_fp8_mode:
             if current_dualfp_enabled:
-                x8, scale_factor = fp16_to_fp8(x)
+                x8, scale_factor = fp16_to_fp8_stable(x)
                 M = x8.shape[0]
                 N = layer.weight.upper_part.shape[0]
                 K = layer.weight.upper_part.shape[1]

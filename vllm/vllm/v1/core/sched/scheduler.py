@@ -388,25 +388,29 @@ class Scheduler(SchedulerInterface):
         
         
         #### Simple decision of dynamic switching between dualfp 16 and dualfp 8
-        token_budget_half = self.max_num_scheduled_tokens // 2
-        use_fp8_mode = total_num_scheduled_tokens > token_budget_half
-        DualFPGlobalState.set_modes(use_dualfp = True, use_fp8 = use_fp8_mode)
+        # token_budget_half = self.max_num_scheduled_tokens // 2
+        # use_fp8_mode = total_num_scheduled_tokens > token_budget_half
+        # DualFPGlobalState.set_modes(use_dualfp = True, use_fp8 = use_fp8_mode)
+        
+        
+        ### For Accuracy Evaluation. Always activate use_dualfp and use_fp8_mode
+        DualFPGlobalState.set_modes(use_dualfp = True, use_fp8 = True)
 
         # Get the current modes
         current_dualfp_enabled = DualFPGlobalState.get_dualfp_mode()
         current_fp8_mode = DualFPGlobalState.get_fp8_mode()
         
-        logger.info(
-            f"Scheduling step: {len(self.running)} running, "
-            f"{len(self.waiting)} waiting, "
-            f"{len(scheduled_new_reqs)} new, "
-            f"{len(scheduled_resumed_reqs)} resumed, "
-            f"{len(scheduled_running_reqs)} running scheduled, "
-            f"total scheduled tokens: {total_num_scheduled_tokens}, "
-            f"token budget: {token_budget}, "
-            f"encoder budget: {encoder_budget}, "
-            f"dualfp enabled: {current_dualfp_enabled}, fp8 mode: {current_fp8_mode}"
-        )
+        # logger.info(
+        #     f"Scheduling step: {len(self.running)} running, "
+        #     f"{len(self.waiting)} waiting, "
+        #     f"{len(scheduled_new_reqs)} new, "
+        #     f"{len(scheduled_resumed_reqs)} resumed, "
+        #     f"{len(scheduled_running_reqs)} running scheduled, "
+        #     f"total scheduled tokens: {total_num_scheduled_tokens}, "
+        #     f"token budget: {token_budget}, "
+        #     f"encoder budget: {encoder_budget}, "
+        #     f"dualfp enabled: {current_dualfp_enabled}, fp8 mode: {current_fp8_mode}"
+        # )
 
         # Get the longest common prefix among all requests in the running queue.
         # This can be potentially used for cascade attention.

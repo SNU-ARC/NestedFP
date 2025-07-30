@@ -343,17 +343,19 @@ class OutputProcessor:
                     new_token_ids, finish_reason, stop_reason):
                 
                 
-                request_output.iteration_total = iteration_stats.iteration_total
-                request_output.iteration_timestamp = iteration_stats.iteration_timestamp
                 ## kv_cache_usage = gpu_cache_usage
-                request_output.kv_cache_usage = scheduler_stats.gpu_cache_usage
-                request_output.kv_cache_usage_gb = scheduler_stats.kv_cache_usage_gb
-                request_output.kv_cache_total_capacity = scheduler_stats.kv_cache_total_capacity
                 request_output.num_prefill = num_prefill
                 request_output.num_decode = num_decode
                 
+                if scheduler_stats:
+                    request_output.kv_cache_usage = scheduler_stats.gpu_cache_usage
+                    request_output.kv_cache_usage_gb = scheduler_stats.kv_cache_usage_gb
+                    request_output.kv_cache_total_capacity = scheduler_stats.kv_cache_total_capacity
+                
 
                 if iteration_stats:
+                    request_output.iteration_total = iteration_stats.iteration_total
+                    request_output.iteration_timestamp = iteration_stats.iteration_timestamp
                     request_output.total_scheduled_requests = iteration_stats.total_scheduled_requests
                     request_output.total_scheduled_tokens = iteration_stats.total_scheduled_tokens
                     request_output.prefill_requests = iteration_stats.prefill_requests

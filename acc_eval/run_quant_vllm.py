@@ -1,6 +1,6 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-MODEL_ID = '/disk2/models/DeepSeek-R1'
+MODEL_ID = '/disk2/models/DeepSeek-R1-Distill-Llama-70B'
 
 
 
@@ -17,7 +17,7 @@ recipe = QuantizationModifier(
   targets="Linear", scheme="FP8_DYNAMIC", ignore=["lm_head"])
 
 # Apply the quantization algorithm.
-SAVE_DIR = '/disk2/models/DeepSeek-R1-FP8-Dynamic-Half'
+SAVE_DIR = '/disk2/models/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half'
 
 oneshot(model=model, recipe=recipe, output_dir=SAVE_DIR)
 
