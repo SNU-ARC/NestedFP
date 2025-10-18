@@ -12,7 +12,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.utils import set_weight_attrs
 
 import cutlass
-import ipdb
+#import ipdb
 import traceback
 
 import torch._dynamo
@@ -163,9 +163,9 @@ class DUALFPLinearMethod(LinearMethodBase):
                 x_abs_max = x.abs().amax(dim=-1, keepdim=True)
                 
                 # NaN/Inf 체크
-                if torch.any(torch.isnan(x_abs_max)) or torch.any(torch.isinf(x_abs_max)):
-                    print("WARNING: NaN or Inf detected in x_abs_max!")
-                    x_abs_max = torch.nan_to_num(x_abs_max, nan=1.0, posinf=1.0, neginf=1.0)
+                #if torch.any(torch.isnan(x_abs_max)) or torch.any(torch.isinf(x_abs_max)):
+                #    print("WARNING: NaN or Inf detected in x_abs_max!")
+                #    x_abs_max = torch.nan_to_num(x_abs_max, nan=1.0, posinf=1.0, neginf=1.0)
                 
                 # 극단적으로 작은 값들을 더 안전하게 처리
                 x_abs_max = torch.where(x_abs_max < 1e-5, 

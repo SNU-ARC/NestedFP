@@ -5,36 +5,12 @@ import time
 import csv
 import gc 
 
-
 from vllm import LLM, SamplingParams
-
-# 경로 설정
-# sys.path.append("/disk/")
-
 import sys
 sys.path.insert(0, "/disk/revision/vllm")  # vllm 소스 디렉토리의 상위 경로
 
 
-import common_globals
-
-def get_idle_gpu():
-    result = subprocess.run(
-        ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    gpu_usage = result.stdout.strip().split("\n")
-    gpu_usage = [int(line.split(",")[1].strip()) for line in gpu_usage]
-    idle_gpu = gpu_usage.index(min(gpu_usage))
-    return idle_gpu
-
 def run_inference_benchmark(llm, output_file, prompts, sampling_params, input_token_size, output_token_size, batch_size, verbose=False):
-    '''
-    주어진 llm 인스턴스에 대해 inference latency를 측정하고 기록
-    '''
-    common_globals.global_llama_forward_time_ms = 0
-
     torch.cuda.synchronize()
     start_time = time.perf_counter()
     outputs = llm.generate(prompts, sampling_params)
@@ -43,7 +19,6 @@ def run_inference_benchmark(llm, output_file, prompts, sampling_params, input_to
 
     latency = end_time - start_time
 
-    # CSV에 기록
     with open(output_file, mode="a", newline="") as file:
         writer = csv.writer(file)
         writer.writerow([input_token_size, output_token_size, batch_size, latency])
@@ -51,12 +26,7 @@ def run_inference_benchmark(llm, output_file, prompts, sampling_params, input_to
     if verbose:
         print(f"[Input {input_token_size} tokens | Output {output_token_size} tokens | Batch {batch_size}] Latency = {latency:.6f} sec")
 
-def main():
-    # Set CUDA_VISIBLE_DEVICES to the idle GPU
-    idle_gpu = get_idle_gpu()
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(idle_gpu)
-    print(f"Using GPU {idle_gpu}")
-    
+def main():    
     # model_path = "/disk/models/Mistral-Small-3.1-24B-Instruct-2503"
     model_path = "/disk/models/Mistral-Small-24B-Base-2501"
     # model_path = "/disk/models/Mistral-Small-Instruct-2409"
