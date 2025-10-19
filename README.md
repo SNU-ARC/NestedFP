@@ -1,168 +1,141 @@
 # NestedFP: High-Performance, Memory-Efficient Dual-Precision Floating Point Support for LLMs [[Paper]](https://arxiv.org/abs/2506.02024)
 
-> Overview:
+## Overview
 
----
+**NestedFP** is a high-performance, memory-efficient dual-precision framework for LLM serving that enables both FP8 and FP16 inference from a single 16-bit model without additional memory overhead. It introduces a lightweight FP16→(FP8 + residual) decomposition and a custom CUTLASS-based kernel integrated into vLLM, achieving up to 1.55× throughput improvement in FP8 mode with accuracy comparable to standard quantized FP8 models. It also retains full FP16 precision capability for dynamic, SLO-aware serving.
 
-## TL;DR (Quickstart)
+## Requirements
+
+* **Ubuntu 22.04**
+* **CUDA 12.4**
+
+## Setup
 
 ```bash
-# 1) Create env
+# 1. Clone NestedFP repository
+git clone https://github.com/SNU-ARC/NestedFP.git
+cd NestedFP
+
+# 2. Create environment
 conda create -n nestedfp python=3.11 -y
 conda activate nestedfp
 
-# 2) Install vLLM (pinned)
-mkdir -p ~/NestedFP && cd ~/NestedFP
+# 3. Install vLLM 0.8.3 precompiled version
+#    Clone vLLM into a temporary folder, then copy only the .git directory
+mkdir -p tmp && cd tmp
+git clone https://github.com/vllm-project/vllm.git
+cd ..
 
-git clone https://github.com/vllm-project/vllm.git tmp_vllm
-mkdir -p vllm && cp -r tmp_vllm/.git vllm/ && rm -rf tmp_vllm
+cp -r tmp/vllm/.git vllm/
+rm -rf tmp
+
 cd vllm
-
-git add . && git commit --allow-empty -m "nestedfp"
-git branch install && git checkout install
-# Known-good commit
+git add .
+git commit -m "nestedfp"
+git branch install
+git checkout install
 git reset --hard 70fedd0f7954079ebee36a7ca834cdf2f3e5d568
 
+# Install with precompiled CUDA 12.4 wheel (for Ubuntu 22.04)
 VLLM_USE_PRECOMPILED=1 pip install --editable .
+
+# Return to main branch
 git checkout main
 
-# 3) Build and install NestedFP kernels
-cd ..
-cd nestedfp
+# 4. Install NestedFP kernels
+cd ../nestedfp
 ./run.sh
 
-# 4) Accuracy eval (GPU 0)
-./scripts/acc_eval.sh 0 /home/ubuntu/models/Mistral-Small-24B-Base-2501
-
-# 5) End-to-end eval
-python scripts/e2e_bench.py --nestedfp --model /home/ubuntu/models/Mistral-Small-24B-Base-2501 &> result.txt
-
-# 6) Kernel search (single GPU)
-./scripts/kernel/run_fp16_single.sh 5120 32768 0 32 2048
+# 5. Install lm-eval library
+pip install lm-eval==0.4.8
 ```
-
----
-
-## NestedFP Modes
-
-### NestedFP8 Mode (`self.fp8 = True`)
-
-* Uses `torch.ops.dualfp.fp8_custom` operation
-* Automatic FP16→FP8 conversion with dynamic scaling
-* Optimized for high throughput scenarios
-
-### NestedFP16 Mode (`self.fp8 = False`)
-
-* Uses standard FP16 residual path
-* To switch to **NestedFP16**, open the installed vLLM repository’s `dualfp.py` file (found under `~/NestedFP/vllm/...`) and change the line where `self.fp8 = True` to `self.fp8 = False`.
-* After modifying, rebuild or re-run your benchmark; the system will automatically run in NestedFP16 mode.
-
----
 
 ## Repository Layout
 
 ```
 NestedFP/
-├── vllm/                       # vLLM source (pinned to known-good commit)
-├── nestedfp/                   # NestedFP kernel sources and build scripts
-│   ├── run.sh                  # Build script for NestedFP kernels
-│   └── ...
+├── vllm/ # vLLM source with NestedFP modifications
+├── cutlass/ # CUTLASS source with custom kernels
+├── nestedfp/ # Python–C++ interface and build scripts for custom CUTLASS kernels
 └── scripts/
-    ├── acc_eval.sh             # Accuracy evaluation wrapper
-    ├── e2e_bench.py            # End-to-end benchmark (TTFT/TPOT/SLO)
-    └── kernel/
-        ├── run_fp16_single.sh  # FP16 kernel search (single GPU)
-        ├── run_fp16_multi.sh   # FP16 kernel search (multi GPU)
-        ├── run_fp8_single.sh   # FP8  kernel search (single GPU)
-        └── run_fp8_multi.sh    # FP8  kernel search (multi GPU)
+├── acc_eval.sh # accuracy evaluation script
+├── e2e_bench.py # end-to-end latency evaluation
+└── kernel/
+├── run_fp16_single.sh # FP16 kernel search (single GPU)
+├── run_fp16_multi.sh # FP16 kernel search (multi GPU)
+├── run_fp8_single.sh # FP8 kernel search (single GPU)
+└── run_fp8_multi.sh # FP8 kernel search (multi GPU)
 ```
 
----
+## NestedFP Modes
 
-## Requirements & CUDA Notes
-
-* **Python**: 3.11
-* **CUDA**: Ubuntu 24.04 → 12.6+
-* **vLLM precompiled wheels**: built for CUDA 12.4. Options:
-
-  1. **Recommended:** build vLLM from source with your CUDA 12.6+
-  2. **Alternate:** use `VLLM_USE_PRECOMPILED=1` (mixed 12.4–12.6 works but not ideal)
-
----
-
-## Verification
+NestedFP supports two precision modes: **NestedFP16** and **NestedFP8**. You can switch between them by editing the following line in `NestedFP/vllm/vllm/model_executor/layers/quantization/dualfp.py` (line 91):
 
 ```python
-from vllm import LLM, SamplingParams
-llm = LLM(model="/home/ubuntu/models/Mistral-Small-24B-Base-2501", dtype="float16")
-out = llm.generate(["Hello NestedFP!"], SamplingParams(max_tokens=16, temperature=0))
-print(out[0].outputs[0].text)
+self.fp8 = True  # Set to False for NestedFP16 mode
 ```
-
----
 
 ## Accuracy Evaluation
 
-```bash
-./scripts/acc_eval.sh 0 /home/ubuntu/models/Mistral-Small-24B-Base-2501
-```
-
-Output: `scripts/results/acc_eval/`
-
----
-
-## End-to-End Benchmark
+You can evaluate model accuracy using the following command:
 
 ```bash
-python scripts/e2e_bench.py --nestedfp --model /home/ubuntu/models/Mistral-Small-24B-Base-2501 &> result.txt
+./scripts/acc_eval.sh <GPU_ID> <MODEL_PATH>
 ```
 
-* `--nestedfp` enables NestedFP8; remove it for baseline FP16.
-* Add `--outfile` to control CSV name; it auto-appends `nestedfp` when enabled.
+- `<gpu_id>`: The GPU index to use
+- `<model_path>`: Path to the model directory  
 
----
+**Example:**
+```bash
+./scripts/acc_eval.sh 0 Mistral-Small-24B-Base-2501
+```
+
+**Output:**
+All results will be saved to: `./results/acc_eval/`
 
 ## Kernel Search
 
-### FP16 (single GPU)
+You can search for the optimal CUTLASS kernel using the following command. The script sweeps over 80 candidate kernels to find the best-performing one for a specific GEMM shape. You can check the GEMM shapes used in our customized vLLM version at: `NestedFP/vllm/vllm/model_executor/layers/quantization/utils/dualfp_utils.py`
 
+**Command format:**
+```bash
+./scripts/kernel/run_fp16_single.sh N K GPU M_START M_END  
+./scripts/kernel/run_fp8_single.sh N K GPU M_START M_END  
+```
+
+- `GPU` — GPU index to use
+- `M_START` — starting M dimension for the search range
+- `M_END` — ending M dimension for the search range
+
+**Example (FP16):**
 ```bash
 ./scripts/kernel/run_fp16_single.sh 5120 32768 0 32 2048
 ```
 
-### FP8
-
+**Example (FP8):**
 ```bash
 ./scripts/kernel/run_fp8_single.sh 5120 32768 0 32 2048
 ```
 
-Results saved under `scripts/results/kernel_search/`.
+## End-to-End Benchmark
 
----
+You can run the end-to-end benchmark using the following command:
+```bash
+python scripts/e2e_bench.py --nestedfp --model <MODEL_PATH>
+```
 
-## Tips
+- `<MODEL_PATH>` — path to the model directory
+- `--nestedfp` — enables NestedFP mode; remove this flag to run in baseline FP16 mode
 
-* No need to manually export PYTHONPATH; scripts prepend `../vllm` automatically.
-* All logs are relative to `scripts/results/`.
-* Deterministic tests: use `temperature=0`.
+**Example:**
+```bash
+python scripts/e2e_bench.py --nestedfp --model Mistral-Small-24B-Base-2501
+```
 
----
+**Output:**
 
-## Troubleshooting
-
-* CUDA mismatch → rebuild vLLM with your system CUDA.
-* `pip` not found → ensure `conda activate nestedfp`.
-* `ImportError: vllm not found` → ensure editable install success.
-
----
-
-## Reproducibility
-
-* Record git commits for both repos.
-* Log GPU/driver/CUDA/torch/vLLM versions.
-* Save all raw logs.
-
----
+All benchmark logs and results will be saved to: `./scripts/results/e2e/`
 
 ## Citation
 
