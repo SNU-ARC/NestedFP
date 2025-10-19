@@ -1,4 +1,0 @@
-input_token_size,output_token_size,batch_size,latency
-Batch Size = ,512,,
-Output Token Size = 512,,,
-32,512,512,47.15581645800012

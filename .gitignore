@@ -17,3 +17,4 @@ downstream3/
 sparse_logs/
 compile.*
 ./end_to_end_test/online/*.json
+results/
