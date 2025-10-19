@@ -69,11 +69,13 @@ NestedFP/
 
 ## NestedFP Modes
 
-NestedFP supports two precision modes: **NestedFP16** and **NestedFP8**. You can switch between them by editing the following line in `NestedFP/vllm/vllm/model_executor/layers/quantization/dualfp.py` (line 91):
+NestedFP supports two precision modes: **NestedFP16** and **NestedFP8**. You can switch between them by editing the following line in `NestedFP/vllm/vllm/model_executor/layers/quantization/dualfp.py` (line 91).  
 
 ```python
 self.fp8 = True  # Set to False for NestedFP16 mode
 ```
+
+Current version of NestedFP8 applies per-token activation quantization.
 
 ## Accuracy Evaluation
 
