@@ -10,13 +10,14 @@ import vllm.envs as envs
 from vllm.attention import AttentionType
 from vllm.attention.selector import backend_name_to_enum, get_attn_backend
 from vllm.config import CacheConfig, get_current_vllm_config
+from vllm.distributed.kv_transfer import (get_kv_transfer_group,
+                                          has_kv_transfer_group,
+                                          is_v1_kv_transfer_group)
 from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.model_executor.layers.linear import UnquantizedLinearMethod
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
 from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
-from vllm.model_executor.layers.quantization.dualfp import DUALFPLinearMethod
-
 from vllm.platforms import _Backend, current_platform
 from vllm.utils import direct_register_custom_op
 
@@ -89,6 +90,7 @@ class Attention(nn.Module):
         # FlashAttn doesn't support quantizing the kv-cache only
         # but requires q to be quantized as well.
         self._q_scale = torch.tensor(1.0, dtype=torch.float32)
+        self._prob_scale = torch.tensor(1.0, dtype=torch.float32)
 
         # We also keep the float32 versions of k/v_scale for attention
         # backends that don't support tensors (Flashinfer)
@@ -104,9 +106,7 @@ class Attention(nn.Module):
         quant_method = quant_config.get_quant_method(
             self, prefix=prefix) if quant_config else None
         if quant_method is not None and not isinstance(
-                quant_method, UnquantizedLinearMethod) and not isinstance(
-                    quant_method, DUALFPLinearMethod
-                ):
+                quant_method, UnquantizedLinearMethod):
             assert isinstance(quant_method, BaseKVCacheMethod)
             # TODO (mgoin): kv cache dtype should be specified in the FP8
             # checkpoint config and become the "auto" behavior
@@ -122,23 +122,6 @@ class Attention(nn.Module):
 
         # During model initialization, the default dtype is set as the model
         # weight and activation dtype.
-        # if quant_method is not None:
-        #     if not isinstance(quant_method, DUALFPLinearMethod):
-        #         assert isinstance(quant_method, BaseKVCacheMethod)
-        #         # TODO (mgoin): kv cache dtype should be specified in the FP8
-        #         # checkpoint config and become the "auto" behavior
-        #         if self.kv_cache_dtype == "fp8_e5m2":
-        #             raise ValueError("fp8_e5m2 kv-cache is not supported with "
-        #                             "fp8 checkpoints.")
-        #         # If quantization is enabled, we make "k_scale" and "v_scale"
-        #         # parameters so that it can be loaded from the model checkpoint.
-        #         # The k/v_scale will then be converted back to native float32
-        #         # values after weight loading.
-        #         self.quant_method = quant_method
-        #         self.quant_method.create_weights(self)
-            
-        
-        
         dtype = torch.get_default_dtype()
         attn_backend = get_attn_backend(head_size,
                                         dtype,
@@ -350,17 +333,54 @@ class MultiHeadAttention(nn.Module):
         return out.reshape(bsz, q_len, -1)
 
 
+def wait_for_kv_layer_from_connector(layer_name: str):
+    if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
+        return
+
+    connector = get_kv_transfer_group()
+
+    forward_context: ForwardContext = get_forward_context()
+    attn_metadata = forward_context.attn_metadata
+    if attn_metadata is None:
+        return
+
+    connector.wait_for_layer_load(layer_name)
+
+
+def maybe_save_kv_layer_to_connector(
+    layer_name: str,
+    kv_cache_layer: List[torch.Tensor],
+):
+    if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
+        return
+
+    connector = get_kv_transfer_group()
+
+    forward_context: ForwardContext = get_forward_context()
+    attn_metadata = forward_context.attn_metadata
+    if attn_metadata is None:
+        return
+
+    connector.save_kv_layer(layer_name, kv_cache_layer, attn_metadata)
+
+
 def unified_attention(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
     layer_name: str,
 ) -> torch.Tensor:
+    wait_for_kv_layer_from_connector(layer_name)
+
     forward_context: ForwardContext = get_forward_context()
     attn_metadata = forward_context.attn_metadata
     self = forward_context.no_compile_layers[layer_name]
     kv_cache = self.kv_cache[forward_context.virtual_engine]
-    return self.impl.forward(self, query, key, value, kv_cache, attn_metadata)
+    output = self.impl.forward(self, query, key, value, kv_cache,
+                               attn_metadata)
+
+    maybe_save_kv_layer_to_connector(layer_name, kv_cache)
+    return output
 
 
 def unified_attention_fake(
@@ -388,6 +408,7 @@ def unified_attention_with_output(
     output: torch.Tensor,
     layer_name: str,
 ) -> None:
+    wait_for_kv_layer_from_connector(layer_name)
     forward_context: ForwardContext = get_forward_context()
     attn_metadata = forward_context.attn_metadata
     self = forward_context.no_compile_layers[layer_name]
@@ -399,6 +420,8 @@ def unified_attention_with_output(
                       kv_cache,
                       attn_metadata,
                       output=output)
+
+    maybe_save_kv_layer_to_connector(layer_name, kv_cache)
 
 
 def unified_attention_with_output_fake(
