@@ -8,13 +8,13 @@ from typing import Optional, Union
 from vllm.outputs import CompletionOutput, RequestOutput
 from vllm.sampling_params import RequestOutputKind
 from vllm.transformers_utils.tokenizer import AnyTokenizer
-from vllm.transformers_utils.tokenizer_group import BaseTokenizerGroup
+from vllm.transformers_utils.tokenizer_group import TokenizerGroup
 from vllm.v1.engine import EngineCoreOutput, EngineCoreRequest, FinishReason
 from vllm.v1.engine.detokenizer import IncrementalDetokenizer
 from vllm.v1.engine.logprobs import LogprobsProcessor
 from vllm.v1.engine.parallel_sampling import ParentRequest
-from vllm.v1.metrics.stats import (IterationStats, SchedulerStats, LoRARequestStates,
-                                   RequestStateStats)
+from vllm.v1.metrics.stats import (IterationStats, LoRARequestStates,
+                                   RequestStateStats, SchedulerStats)
 
 
 class RequestOutputCollector:
@@ -28,32 +28,37 @@ class RequestOutputCollector:
 
     def __init__(self, output_kind: RequestOutputKind):
         self.aggregate = output_kind == RequestOutputKind.DELTA
-        self.output: Optional[RequestOutput] = None
+        self.output: Optional[Union[RequestOutput, Exception]] = None
         self.ready = asyncio.Event()
 
-    def put(self, output: RequestOutput) -> None:
-        if self.output is None:
+    def put(self, output: Union[RequestOutput, Exception]) -> None:
+        """Non-blocking put operation."""
+        if self.output is None or isinstance(output, Exception):
             self.output = output
             self.ready.set()
-        elif self.aggregate:
-            # Coalesce the outputs in delta case.
-            self.output.add(output)
-        else:
-            # Just replace latest in non-delta case.
-            self.output = output
+        elif isinstance(self.output, RequestOutput):
+            # This ensures that request outputs with different request indexes
+            # (if n > 1) do not override each other.
+            self.output.add(output, aggregate=self.aggregate)
 
     async def get(self) -> RequestOutput:
+        """Get operation blocks on put event."""
         while (output := self.output) is None:
             await self.ready.wait()
         self.output = None
         self.ready.clear()
+        if isinstance(output, Exception):
+            raise output
         return output
 
     def get_nowait(self) -> Optional[RequestOutput]:
+        """Non-blocking get operation."""
         output = self.output
         if output is not None:
             self.output = None
             self.ready.clear()
+        if isinstance(output, Exception):
+            raise output
         return output
 
 
@@ -104,6 +109,7 @@ class RequestState:
         cls,
         tokenizer: AnyTokenizer,
         request: EngineCoreRequest,
+        prompt: Optional[str],
         parent_req: Optional[ParentRequest],
         request_index: int,
         queue: Optional[RequestOutputCollector],
@@ -118,7 +124,7 @@ class RequestState:
             lora_name=(request.lora_request.name
                        if request.lora_request is not None else None),
             output_kind=request.sampling_params.output_kind,
-            prompt=request.prompt,
+            prompt=prompt,
             prompt_token_ids=request.prompt_token_ids,
             logprobs_processor=LogprobsProcessor.from_new_request(
                 tokenizer=tokenizer,
@@ -220,7 +226,7 @@ class OutputProcessor:
 
     def __init__(
         self,
-        tokenizer: BaseTokenizerGroup,
+        tokenizer: TokenizerGroup,
         log_stats: bool,
     ):
         self.log_stats = log_stats
@@ -234,6 +240,13 @@ class OutputProcessor:
 
     def has_unfinished_requests(self) -> bool:
         return len(self.request_states) > 0
+
+    def propagate_error(self, e: Exception):
+        """Propagate error to all generate() tasks."""
+
+        for _, state in self.request_states.items():
+            assert state.queue is not None
+            state.queue.put(e)
 
     def abort_requests(
         self,
@@ -255,6 +268,7 @@ class OutputProcessor:
     def add_request(
         self,
         request: EngineCoreRequest,
+        prompt: Optional[str],
         parent_req: Optional[ParentRequest] = None,
         request_index: int = 0,
         queue: Optional[RequestOutputCollector] = None,
@@ -266,6 +280,7 @@ class OutputProcessor:
         req_state = RequestState.from_new_request(
             tokenizer=self.tokenizer.get_lora_tokenizer(request.lora_request),
             request=request,
+            prompt=prompt,
             parent_req=parent_req,
             request_index=request_index,
             queue=queue,
@@ -342,16 +357,13 @@ class OutputProcessor:
             if request_output := req_state.make_request_output(
                     new_token_ids, finish_reason, stop_reason):
                 
-                
-                ## kv_cache_usage = gpu_cache_usage
                 request_output.num_prefill = num_prefill
                 request_output.num_decode = num_decode
-                
+
                 if scheduler_stats:
                     request_output.kv_cache_usage = scheduler_stats.gpu_cache_usage
                     request_output.kv_cache_usage_gb = scheduler_stats.kv_cache_usage_gb
                     request_output.kv_cache_total_capacity = scheduler_stats.kv_cache_total_capacity
-                
 
                 if iteration_stats:
                     request_output.iteration_total = iteration_stats.iteration_total
@@ -364,7 +376,7 @@ class OutputProcessor:
                     request_output.decode_tokens = iteration_stats.decode_tokens
                     request_output.request_details = iteration_stats.request_details
                 else:
-                    # iteration_stats가 없는 경우 기본값
+                    # 기본값 설정
                     request_output.total_scheduled_requests = None
                     request_output.total_scheduled_tokens = None
                     request_output.prefill_requests = None
@@ -372,6 +384,12 @@ class OutputProcessor:
                     request_output.prefill_tokens = None
                     request_output.decode_tokens = None
                     request_output.request_details = []
+                
+                
+                
+                
+                
+                
                 
                 
                 if req_state.queue is not None:

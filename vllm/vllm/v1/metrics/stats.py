@@ -4,6 +4,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
+from vllm.v1.spec_decode.metrics import SpecDecodingStats
+
 if TYPE_CHECKING:
     from vllm.v1.engine import EngineCoreEvent, EngineCoreOutput, FinishReason
     from vllm.v1.engine.output_processor import RequestState
@@ -31,13 +33,13 @@ class SchedulerStats:
     num_waiting_reqs: int = 0
 
     gpu_cache_usage: float = 0.0
-    kv_cache_usage_gb : float = 0.0
+    kv_cache_usage_gb: float = 0.0
     kv_cache_total_capacity: float = 0.0
 
     prefix_cache_stats: PrefixCacheStats = field(
         default_factory=PrefixCacheStats)
-    
-    
+
+    spec_decoding_stats: Optional[SpecDecodingStats] = None
 
 
 @dataclass
@@ -80,8 +82,8 @@ class FinishedRequestStats:
 class IterationStats:
     """Stats associated with a single set of EngineCoreOutputs."""
 
-    def __init__(self, iteration_total: int = 0):
-        self.iteration_timestamp = time.perf_counter()
+    def __init__(self):
+        self.iteration_timestamp = time.time()
         self.num_generation_tokens = 0
         self.num_prompt_tokens = 0
         self.num_preempted_reqs = 0
@@ -154,6 +156,7 @@ class IterationStats:
         self.decode_tokens = decode_tokens
         if request_details:
             self.request_details = request_details
+
 
     def update_from_events(self, req_id: str, events: list["EngineCoreEvent"],
                            is_prefilling: bool, req_stats: RequestStateStats,

@@ -1,9 +1,47 @@
 import torch
 import cutlass
-import ipdb
 
 
 nestedfp_lib = torch.library.Library("nestedfp", "DEF")
+
+
+# nestedfp_utils.py 상단 (nestedfp_lib 선언 다음)에 추가
+
+class NestedFPGlobalState:
+    """Global state manager for NestedFP quantization mode switching"""
+    _use_nestedfp = False
+    _use_fp8 = True
+    
+    @classmethod
+    def set_nestedfp_mode(cls, enable: bool):
+        """Enable/disable NestedFP quantization"""
+        cls._use_nestedfp = enable
+    
+    @classmethod 
+    def get_nestedfp_mode(cls):
+        """Get current NestedFP mode"""
+        return cls._use_nestedfp
+    
+    @classmethod
+    def set_fp8_mode(cls, enable: bool):
+        """Set fp8/fp16 mode when NestedFP is enabled"""
+        cls._use_fp8 = enable
+    
+    @classmethod 
+    def get_fp8_mode(cls):
+        """Get current fp8/fp16 mode"""
+        return cls._use_fp8
+    
+    @classmethod
+    def set_modes(cls, use_nestedfp: bool, use_fp8: bool):
+        """Set both modes simultaneously"""
+        cls._use_nestedfp = use_nestedfp
+        cls._use_fp8 = use_fp8
+    
+    @classmethod
+    def get_modes(cls):
+        """Get both modes as tuple (use_nestedfp, use_fp8)"""
+        return cls._use_nestedfp, cls._use_fp8
 
 
 @torch.library.custom_op("nestedfp::fp16_baseline", mutates_args=({}))
@@ -837,7 +875,6 @@ def fp8_custom(
                     (448, "fp8_48"),
                     (480, "fp8_48"),
                     (512, "fp8_48"),
-                    (float("inf"), "fp8_48"),
             ]
         elif (N,K) == (7680, 5120):
             range_kernel_map = [
@@ -857,7 +894,6 @@ def fp8_custom(
                     (448, "fp8_48"),
                     (480, "fp8_48"),
                     (512, "fp8_48"),
-                    (float("inf"), "fp8_48"),
             ] 
         elif (N,K) == (35840, 5120):
             range_kernel_map = [
@@ -877,7 +913,6 @@ def fp8_custom(
                     (448, "fp8_48"),
                     (480, "fp8_48"),
                     (512, "fp8_48"),
-                    (float("inf"), "fp8_48"),
             ]       
         
         else:
@@ -915,6 +950,8 @@ def fp8_custom(
     kernel(A, B, D)
     
     return D.view(M, N)
+
+
 
 
 @fp8_custom.register_fake

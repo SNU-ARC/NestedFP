@@ -6,17 +6,8 @@ from typing import Any, Literal, Optional, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.nn.parameter import Parameter, UninitializedParameter
-
-
-import cutlass
-#import ipdb
-import traceback
-
-
-from vllm.model_executor.layers.quantization.utils.dualfp_utils import * # dualfp custom ops 등록
-
+import torch.nn.functional as F
 
 from vllm.distributed import (divide, get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
@@ -26,6 +17,7 @@ from vllm.distributed import (divide, get_tensor_model_parallel_rank,
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
+from vllm.model_executor.layers.utils import dispatch_unquantized_gemm
 # yapf: disable
 from vllm.model_executor.parameter import (BasevLLMParameter,
                                            BlockQuantScaleParameter,
@@ -36,10 +28,16 @@ from vllm.model_executor.parameter import (BasevLLMParameter,
 # yapf: enable
 from vllm.model_executor.utils import set_weight_attrs
 
+from vllm.model_executor.layers.quantization.utils.nestedfp_utils import *
+import traceback
+import cutlass
+
 logger = init_logger(__name__)
 
 WEIGHT_LOADER_V2_SUPPORTED = [
     "CompressedTensorsLinearMethod",
+    "BitBLASLinearMethod",
+    "GPTQBitBLASLinearMethod",
     "AWQMarlinLinearMethod",
     "AWQLinearMethod",
     "GPTQMarlinLinearMethod",
@@ -58,11 +56,14 @@ WEIGHT_LOADER_V2_SUPPORTED = [
     "ModelOptNvFp4LinearMethod",
 ]
 
-import sys
-sys.path.append("/disk/")  # common_globals.py가 있는 경로 추가
 
- 
+def adjust_bitblas_shard(param, shard_size, shard_offset):
+    bitblas_tile_size = getattr(param, "bitblas_tile_size", None)
+    if bitblas_tile_size is not None:
+        return (shard_size // bitblas_tile_size,
+                shard_offset // bitblas_tile_size)
 
+    return shard_size, shard_offset
 
 
 def adjust_marlin_shard(param, shard_size, shard_offset):
@@ -180,187 +181,9 @@ class LinearMethodBase(QuantizeMethodBase):
         """Apply the weights in layer to the input tensor.
         Expects create_weights to have been called before on the layer."""
         raise NotImplementedError
-    
 
 
 
-def select_kernel_by_shape(M: int, N: int, K: int):
-        #58 개의 kernel map
-        kernel_map = {
-            "baseline_1": cutlass.cutlass_tma_warp_specialized_64_16_64,
-            "baseline_2": cutlass.cutlass_tma_warp_specialized_64_16_128,
-            "baseline_3": cutlass.cutlass_tma_warp_specialized_64_16_256,
-            "baseline_4": cutlass.cutlass_tma_warp_specialized_64_32_64,
-            "baseline_5": cutlass.cutlass_tma_warp_specialized_64_32_128,
-            "baseline_6": cutlass.cutlass_tma_warp_specialized_64_32_256,
-            "baseline_7": cutlass.cutlass_tma_warp_specialized_64_64_64,
-            "baseline_8": cutlass.cutlass_tma_warp_specialized_64_64_128,
-            "baseline_9": cutlass.cutlass_tma_warp_specialized_64_64_256,
-            "baseline_10": cutlass.cutlass_tma_warp_specialized_64_128_64,
-            "baseline_11": cutlass.cutlass_tma_warp_specialized_64_128_128,
-            "baseline_12": cutlass.cutlass_tma_warp_specialized_64_128_256,
-            "baseline_13": cutlass.cutlass_tma_warp_specialized_64_256_64,
-            "baseline_14": cutlass.cutlass_tma_warp_specialized_64_256_128,
-            "baseline_15": cutlass.cutlass_tma_warp_specialized_128_16_64,
-            "baseline_16": cutlass.cutlass_tma_warp_specialized_128_16_128,
-            "baseline_17": cutlass.cutlass_tma_warp_specialized_128_16_256,
-            "baseline_18": cutlass.cutlass_tma_warp_specialized_128_32_64,
-            "baseline_19": cutlass.cutlass_tma_warp_specialized_128_32_128,
-            "baseline_20": cutlass.cutlass_tma_warp_specialized_128_32_256,
-            "baseline_21": cutlass.cutlass_tma_warp_specialized_128_64_64,
-            "baseline_22": cutlass.cutlass_tma_warp_specialized_128_64_128,
-            "baseline_23": cutlass.cutlass_tma_warp_specialized_128_64_256,
-            "baseline_24": cutlass.cutlass_tma_warp_specialized_128_128_64,
-            "baseline_25": cutlass.cutlass_tma_warp_specialized_128_128_128,
-            "baseline_26": cutlass.cutlass_tma_warp_specialized_128_256_64,
-            "baseline_27": cutlass.cutlass_tma_warp_specialized_128_256_128,
-            "baseline_28": cutlass.cutlass_tma_warp_specialized_256_16_64,
-            "baseline_29": cutlass.cutlass_tma_warp_specialized_256_16_128,
-            "baseline_30": cutlass.cutlass_tma_warp_specialized_256_32_64,
-            "baseline_31": cutlass.cutlass_tma_warp_specialized_256_32_128,
-            "baseline_32": cutlass.cutlass_tma_warp_specialized_256_64_64,
-            "baseline_33": cutlass.cutlass_tma_warp_specialized_256_64_128,
-            "baseline_34": cutlass.cutlass_tma_warp_specialized_256_128_64,
-            "baseline_35": cutlass.cutlass_tma_warp_specialized_256_128_128,
-            "baseline_36": cutlass.cutlass_tma_warp_specialized_256_256_64,
-            "baseline_37": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_16_64,
-            "baseline_38": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_16_128,
-            "baseline_39": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_16_256,
-            "baseline_40": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_32_64,
-            "baseline_41": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_32_128,
-            "baseline_42": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_32_256,
-            "baseline_43": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_64_64,
-            "baseline_44": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_64_128,
-            "baseline_45": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_64_256,
-            "baseline_46": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_128_64,
-            "baseline_47": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_128_128,
-            "baseline_48": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_256_64,
-            "baseline_49": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_128_256_128,
-            "baseline_50": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_16_64,
-            "baseline_51": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_16_128,
-            "baseline_52": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_32_64,
-            "baseline_53": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_32_128,
-            "baseline_54": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_64_64,
-            "baseline_55": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_64_128,
-            "baseline_56": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_128_64,
-            "baseline_57": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_128_128,
-            "baseline_58": cutlass.cutlass_tma_warp_specialized_cooperative_2_1_1_256_256_64,
-        }
-
-        # n, k 에 따라서 optimal kernel 선택.
-        if (N, K) == (4096, 4096):
-            range_kernel_map = [
-                (32, "baseline_3"), (64, "baseline_7"), (96, "baseline_10"),
-                (128, "baseline_8"), (160, "baseline_22"), (192, "baseline_21"),
-                (224, "baseline_11"), (256, "baseline_10"), (288, "baseline_32"),
-                (320, "baseline_24"), (352, "baseline_24"), (384, "baseline_46"),
-                (416, "baseline_46"), (448, "baseline_13"), (512, "baseline_13"),
-                (704, "baseline_56"), (768, "baseline_48"), (832, "baseline_56"),
-                (928, "baseline_48"), (1024, "baseline_48"), (1280, "baseline_13"),
-                (1376, "baseline_24"), (1440, "baseline_46"), (1536, "baseline_24"),
-                (1600, "baseline_56"), (1664, "baseline_48"), (1760, "baseline_56"),
-                (1920, "baseline_48"), (2048, "baseline_48"), (float("inf"), "baseline_48"),
-            ]
-
-        elif (N, K) == (6144, 4096):
-            range_kernel_map = [
-                (32, "baseline_4"), (64, "baseline_7"), (128, "baseline_10"),
-                (160, "baseline_46"), (192, "baseline_24"), (256, "baseline_46"),
-                (320, "baseline_32"), (416, "baseline_56"), (480, "baseline_48"),
-                (640, "baseline_56"), (704, "baseline_54"), (800, "baseline_46"),
-                (832, "baseline_48"), (896, "baseline_46"), (928, "baseline_48"),
-                (1024, "baseline_46"), (1056, "baseline_56"), (1280, "baseline_48"),
-                (1408, "baseline_56"), (1472, "baseline_48"), (1664, "baseline_46"),
-                (1952, "baseline_48"), (1984, "baseline_56"), (2048, "baseline_48"),
-                (float("inf"), "baseline_48"),
-            ]
-
-        elif (N, K) == (28672, 4096):
-            range_kernel_map = [(32, "baseline_41"), (64, "baseline_44"), (128, "baseline_57"),
-                                (160, "baseline_56"), (256, "baseline_48"), (288, "baseline_56"),
-                                (320, "baseline_46"), (416, "baseline_56"), (512, "baseline_48"),
-                                (640, "baseline_56"), (768, "baseline_48"), (896, "baseline_56"),
-                                (1024, "baseline_48"), (1152, "baseline_56"), (1280, "baseline_48"),
-                                (1408, "baseline_56"), (1792, "baseline_48"), (1920, "baseline_56"),
-                                (2048, "baseline_48"), (float("inf"), "baseline_48")]
-
-        elif (N, K) == (4096, 14336):
-            range_kernel_map = [(32, "baseline_5"), (64, "baseline_7"), (96, "baseline_41"),
-                                (128, "baseline_8"), (160, "baseline_44"), (192, "baseline_43"),
-                                (224, "baseline_24"), (256, "baseline_10"), (448, "baseline_46"),
-                                (512, "baseline_24"), (608, "baseline_48"), (640, "baseline_56"),
-                                (768, "baseline_48"), (928, "baseline_56"), (1024, "baseline_48"),
-                                (1056, "baseline_24"), (1088, "baseline_46"), (1120, "baseline_24"),
-                                (1280, "baseline_46"), (1312, "baseline_48"), (1408, "baseline_46"),
-                                (1472, "baseline_48"), (1504, "baseline_13"), (1536, "baseline_46"),
-                                (1568, "baseline_56"), (1792, "baseline_48"), (1824, "baseline_56"),
-                                (2048, "baseline_48"), (float("inf"), "baseline_48")]
-
-        else:
-            range_kernel_map = [(32, "baseline_5"), (64, "baseline_7"), (96, "baseline_41"),
-                                (128, "baseline_8"), (160, "baseline_44"), (192, "baseline_43"),
-                                (224, "baseline_24"), (256, "baseline_10"), (448, "baseline_46"),
-                                (512, "baseline_24"), (608, "baseline_48"), (640, "baseline_56"),
-                                (768, "baseline_48"), (928, "baseline_56"), (1024, "baseline_48"),
-                                (1056, "baseline_24"), (1088, "baseline_46"), (1120, "baseline_24"),
-                                (1280, "baseline_46"), (1312, "baseline_48"), (1408, "baseline_46"),
-                                (1472, "baseline_48"), (1504, "baseline_13"), (1536, "baseline_46"),
-                                (1568, "baseline_56"), (1792, "baseline_48"), (1824, "baseline_56"),
-                                (2048, "baseline_48"), (float("inf"), "baseline_48")]
-        
-
-        # For debugging purpose. => 
-        
-        
-        # if (N, K) == (4096, 4096):
-        #     range_kernel_map = [
-        #             (32, "baseline_3"), (64, "baseline_7"), (96, "baseline_10"),
-        #             (128, "baseline_8"), (160, "baseline_22"), (192, "baseline_21"),
-        #             (224, "baseline_11"), (256, "baseline_10"), (288, "baseline_32"),
-        #             (320, "baseline_24"), (352, "baseline_24"), (384, "baseline_46"),
-        #             (416, "baseline_46"), (448, "baseline_13"), (512, "baseline_13"),
-        #             (704, "baseline_56"), (768, "baseline_48"), (832, "baseline_56"),
-        #             (928, "baseline_48"), (1024, "baseline_48"), (1280, "baseline_13"),
-        #             (1376, "baseline_24"), (1440, "baseline_46"), (1536, "baseline_24"),
-        #             (1600, "baseline_56"), (1664, "baseline_48"), (1760, "baseline_56"),
-        #             (1920, "baseline_48"), (2048, "baseline_48"), (float("inf"), "baseline_48"),
-        #     ]
-
-        
-        # else:
-        #     # range_kernel_map = [
-        #     #         (32, "baseline_3"), (64, "baseline_7"), (96, "baseline_10"),
-        #     #         (128, "baseline_8"), (160, "baseline_22"), (192, "baseline_21"),
-        #     #         (224, "baseline_11"), (256, "baseline_10"), (288, "baseline_32"),
-        #     #         (320, "baseline_24"), (352, "baseline_24"), (384, "baseline_46"),
-        #     #         (416, "baseline_46"), (448, "baseline_13"), (512, "baseline_13"),
-        #     #         (704, "baseline_56"), (768, "baseline_48"), (832, "baseline_56"),
-        #     #         (928, "baseline_48"), (1024, "baseline_48"), (1280, "baseline_13"),
-        #     #         (1376, "baseline_24"), (1440, "baseline_46"), (1536, "baseline_24"),
-        #     #         (1600, "baseline_56"), (1664, "baseline_48"), (1760, "baseline_56"),
-        #     #         (1920, "baseline_48"), (2048, "baseline_48"), (float("inf"), "baseline_48"),
-        #     #   ]
-        # # range_kernel_map = [
-        # #         (32, "baseline_3"), (64, "baseline_7"), (96, "baseline_10"),
-        # #         (128, "baseline_8"), (160, "baseline_22"), (192, "baseline_21"),
-        # #         (224, "baseline_11"), (256, "baseline_10"), (288, "baseline_32"),
-        # #         (320, "baseline_24"), (352, "baseline_24"), (384, "baseline_46"),
-        # #         (416, "baseline_46"), (448, "baseline_13"), (512, "baseline_13"),
-        # #         (704, "baseline_56"), (768, "baseline_48"), (832, "baseline_56"),
-        # #         (928, "baseline_48"), (1024, "baseline_48"), (1280, "baseline_13"),
-        # #         (1376, "baseline_24"), (1440, "baseline_46"), (1536, "baseline_24"),
-        # #         (1600, "baseline_56"), (1664, "baseline_48"), (1760, "baseline_56"),
-        # #         (1920, "baseline_48"), (2048, "baseline_48"), (float("inf"), "baseline_48"),
-        # # ]
-        
-        
-        for upper_bound, kernel_key in range_kernel_map:
-            if M <= upper_bound:
-                return kernel_map[kernel_key]
-
-
-
-        raise ValueError(f"No optimal kernel defined for M={M}")
 
 class UnquantizedLinearMethod(LinearMethodBase):
     """Linear method without quantization."""
@@ -378,33 +201,14 @@ class UnquantizedLinearMethod(LinearMethodBase):
         layer.register_parameter("weight", weight)
         set_weight_attrs(weight, extra_weight_attrs)
 
-
-    
     def apply(self,
-               layer: torch.nn.Module,
-               x: torch.Tensor,
-               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
- 
-        # fp16_baseline = cutlass.cutlass_tma_warp_specialized_256_32_64
-        # fp16_baseline = select_kernel_by_shape(x.shape[0], layer.weight.shape[0], x.shape[1])
-        #  fp16_baseline = cutlass.cutlass_tma_warp_specialized_custom_64_16_64
-         
-        # x : [M, K]
-        # layer.weight [ N, K]
-        # with open("shape.txt", "a") as f:
-        #     f.write(f"x.shape = {x.shape}\n")
-            # f.write(f"weight.shape = {layer.weight.shape}\n")
+              layer: torch.nn.Module,
+              x: torch.Tensor,
+              bias: Optional[torch.Tensor] = None) -> torch.Tensor:
 
-        # # output = fp16_baseline(layer.weight, x)
-        # M = x.shape[0]
-        # N = layer.weight.shape[0]
-        # K = x.shape[1]
-        # output = torch.ops.dualfp.fp16_baseline(x.shape[0], layer.weight.shape[0], layer.weight.shape[1], layer.weight.contiguous(), x.contiguous())
-        # # output = fp16_baseline(layer.weight.contiguous(), x.contiguous())
-        # output = output.view(x.shape[0], layer.weight.shape[0]).contiguous()
-        # return output
-         
-        return F.linear(x, layer.weight, bias)
+        return dispatch_unquantized_gemm()(x, layer.weight, bias)
+    
+
 
 
 class LinearBase(torch.nn.Module):
@@ -444,25 +248,16 @@ class LinearBase(torch.nn.Module):
             self.quant_method: Optional[
                 QuantizeMethodBase] = UnquantizedLinearMethod()
         else:
-            method = quant_config.get_quant_method(self, prefix=prefix)
-            if method is None:
-                self.quant_method = UnquantizedLinearMethod()
-            else:
-                self.quant_method = method
-        with open("linear_init_log.txt", "a") as f:
-            f.write(f"[LinearBase Init] prefix = {prefix}\n")
-            f.write(f"[LinearBase Init] quant_method = {type(self.quant_method).__name__}\n")
-            f.write("=" * 50 + "\n")
-
-            
+            self.quant_method = quant_config.get_quant_method(self,
+                                                              prefix=prefix)
         self.return_bias = return_bias
+        
         self.load_count = 0
 
     def forward(
         self, x: torch.Tensor
     ) -> Union[torch.Tensor, tuple[torch.Tensor, Optional[Parameter]]]:
         raise NotImplementedError
-    
     
     def divide_fp16(self, param: Parameter, param_data: torch.Tensor):
         TH = 1.8192
@@ -479,12 +274,19 @@ class LinearBase(torch.nn.Module):
             setattr(param, "upper_part", upper_part)
             setattr(param, "lower_part", lower_part)
             print("Weight successfully split into upper and lower parts.")
-            self.quant_method.is_dualfp_enabled = True
+            self.quant_method.is_nestedfp_enabled = True
         else:
             print("Weight exceeds threshold, not splitting.")
             # setattr(param, "full_weight", param_data)
             del param_data
-            self.quant_method.is_dualfp_enabled = False
+            self.quant_method.is_nestedfp_enabled = False
+            
+    def increase_load_count_check_divide_fp16(self, param: Parameter, param_data: torch.Tensor):
+        from vllm.model_executor.layers.quantization.nestedfp import NestedFPLinearMethod
+        """Increase the load count and check if we need to divide fp16."""
+        self.load_count = self.load_count + 1
+        if self.load_count == len(self.output_sizes) and isinstance(self.quant_method, NestedFPLinearMethod):
+            self.divide_fp16(param, param_data)
 
 
 class ReplicatedLinear(LinearBase):
@@ -704,7 +506,6 @@ class ColumnParallelLinear(LinearBase):
 
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
-        #self.divide_fp16(param, param.data)
 
     def weight_loader_v2(self, param: Parameter, loaded_weight: torch.Tensor):
         # Special case for loading scales off disk, which often do not
@@ -795,27 +596,19 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                       loaded_weight: torch.Tensor,
                       loaded_shard_id: Optional[int] = None):
 
-        from vllm.model_executor.layers.quantization.dualfp import DUALFPLinearMethod
-
         # Special case for GGUF
         # initialize GGUF param after we know the quantize type
         is_gguf_weight = getattr(param, "is_gguf_weight", False)
         is_gguf_weight_type = getattr(param, "is_gguf_weight_type", False)
         if is_gguf_weight_type:
-            # if loaded_shard_id is not None:
-            #     param.data[loaded_shard_id].copy_(loaded_weight)
-            #     param.shard_weight_type[loaded_shard_id] = loaded_weight.item()
-            # else:
-            #     param.shard_weight_type = {
-            #         i: loaded_weight.item()
-            #         for i, _ in enumerate(self.output_sizes)
-            #     }
-            
-            
-            param.data[loaded_shard_id].copy_(loaded_weight)
-
-            param.shard_weight_type[loaded_shard_id] = loaded_weight.item()
-            
+            if loaded_shard_id is not None:
+                param.data[loaded_shard_id].copy_(loaded_weight)
+                param.shard_weight_type[loaded_shard_id] = loaded_weight.item()
+            else:
+                param.shard_weight_type = {
+                    i: loaded_weight.item()
+                    for i, _ in enumerate(self.output_sizes)
+                }
             return
 
         if is_gguf_weight:
@@ -873,6 +666,9 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                     shard_size, shard_offset = adjust_marlin_shard(
                         param, shard_size, shard_offset)
 
+                shard_size, shard_offset = adjust_bitblas_shard(
+                    param, shard_size, shard_offset)
+
                 if use_bitsandbytes_4bit:
                     index = list(itertools.accumulate([0] + self.output_sizes))
                     orig_offsets = {
@@ -904,6 +700,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                 # Special case for Marlin.
                 shard_size, shard_offset = adjust_marlin_shard(
                     param, shard_size, shard_offset)
+            shard_size, shard_offset = adjust_bitblas_shard(
+                param, shard_size, shard_offset)
 
             use_bitsandbytes_4bit = getattr(param, "use_bitsandbytes_4bit",
                                             False)
@@ -946,18 +744,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
         
-        # print("output_sizes, shard_id ",self.output_sizes, " ", loaded_shard_id)
-
         
-
-        self.load_count = self.load_count + 1
-
-        if self.load_count == len(self.output_sizes) and isinstance(self.quant_method, DUALFPLinearMethod):
-
-            self.divide_fp16(param, param.data)
-        
-        
-        
+        self.increase_load_count_check_divide_fp16(param, param.data)
 
     def _load_fused_module_from_checkpoint(self, param: BasevLLMParameter,
                                            loaded_weight: torch.Tensor):
@@ -996,10 +784,6 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                          param: BasevLLMParameter,
                          loaded_weight: torch.Tensor,
                          loaded_shard_id: Optional[int] = None):
-        
-        
-        from vllm.model_executor.layers.quantization.dualfp import DUALFPLinearMethod
-        
         if loaded_shard_id is None:
             if isinstance(param, PerTensorScaleParameter):
                 param.load_merged_column_weight(loaded_weight=loaded_weight,
@@ -1039,10 +823,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                                         shard_offset=shard_offset,
                                         shard_size=shard_size)
         
-        self.load_count = self.load_count + 1
-        if self.load_count == len(self.output_sizes) and isinstance(self.quant_method, DUALFPLinearMethod):
+        self.increase_load_count_check_divide_fp16(param, param.data)
 
-            self.divide_fp16(param, param.data)
 
 class QKVParallelLinear(ColumnParallelLinear):
     """Linear layers for the attention's QKV transformation.
@@ -1108,6 +890,20 @@ class QKVParallelLinear(ColumnParallelLinear):
             self.num_kv_heads * self.head_size * tp_size,  # k_proj
             self.num_kv_heads * self.head_size * tp_size,  # v_proj 
         ]
+        
+        # print(f"[QKV Init] hidden_size: {hidden_size}")
+        # print(f"[QKV Init] head_size: {head_size}")
+        # print(f"[QKV Init] total_num_heads: {total_num_heads}")
+        # print(f"[QKV Init] total_num_kv_heads: {total_num_kv_heads}")
+        # print(f"[QKV Init] tensor_parallel_size (tp_size): {tp_size}")
+        # print(f"[QKV Init] num_heads: {self.num_heads}")
+        # print(f"[QKV Init] num_kv_heads: {self.num_kv_heads}")
+        # print(f"[QKV Init] num_kv_head_replicas: {self.num_kv_head_replicas}")
+        # print(f"[QKV Init] Calculated output_size: {output_size}")
+        # print(f"[QKV Init] Expected q_proj dim: {self.output_sizes[0]}")
+        # print(f"[QKV Init] Expected k_proj dim: {self.output_sizes[1]}")
+        # print(f"[QKV Init] Expected v_proj dim: {self.output_sizes[2]}")
+        # print(f"[QKV Init] Sum of output_sizes: {sum(self.output_sizes)}")
 
         super().__init__(input_size=input_size,
                          output_size=output_size,
@@ -1176,10 +972,6 @@ class QKVParallelLinear(ColumnParallelLinear):
                          param: BasevLLMParameter,
                          loaded_weight: torch.Tensor,
                          loaded_shard_id: Optional[str] = None):
-        
-        from vllm.model_executor.layers.quantization.dualfp import DUALFPLinearMethod
-        
-        
         if loaded_shard_id is None:  # special case for certain models
             if isinstance(param, PerTensorScaleParameter):
                 param.load_qkv_weight(loaded_weight=loaded_weight, shard_id=0)
@@ -1196,23 +988,27 @@ class QKVParallelLinear(ColumnParallelLinear):
         shard_offset = self._get_shard_offset_mapping(loaded_shard_id)
         shard_size = self._get_shard_size_mapping(loaded_shard_id)
 
+        # Note(simon): This is needed for Qwen3's fp8 quantization.
+        if isinstance(param, BlockQuantScaleParameter):
+            assert self.quant_method is not None
+            assert hasattr(self.quant_method, "quant_config")
+            weight_block_size = self.quant_method.quant_config.weight_block_size
+            block_n, _ = weight_block_size[0], weight_block_size[1]
+            shard_offset = (shard_offset + block_n - 1) // block_n
+            shard_size = (shard_size + block_n - 1) // block_n
+
         param.load_qkv_weight(loaded_weight=loaded_weight,
                               num_heads=self.num_kv_head_replicas,
                               shard_id=loaded_shard_id,
                               shard_offset=shard_offset,
                               shard_size=shard_size)
-        self.load_count = self.load_count + 1
-
-        if self.load_count == len(self.output_sizes) and isinstance(self.quant_method, DUALFPLinearMethod):
-            self.divide_fp16(param, param.data)
+        
+        self.increase_load_count_check_divide_fp16(param, param.data)
 
     def weight_loader(self,
                       param: Parameter,
                       loaded_weight: torch.Tensor,
                       loaded_shard_id: Optional[str] = None):
-
-        from vllm.model_executor.layers.quantization.dualfp import DUALFPLinearMethod
-
 
         # Special case for GGUF
         # initialize GGUF param after we know the quantize type
@@ -1395,15 +1191,8 @@ class QKVParallelLinear(ColumnParallelLinear):
 
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
-
-        self.load_count = self.load_count + 1
-
         
-
-        if self.load_count == len(self.output_sizes) and isinstance(self.quant_method, DUALFPLinearMethod):
-
-            self.divide_fp16(param, param.data)
-
+        self.increase_load_count_check_divide_fp16(param, param.data)
 
 
 class RowParallelLinear(LinearBase):
@@ -1490,9 +1279,6 @@ class RowParallelLinear(LinearBase):
             self.register_parameter("bias", None)
 
     def weight_loader(self, param: Parameter, loaded_weight: torch.Tensor):
-        
-        from vllm.model_executor.layers.quantization.dualfp import DUALFPLinearMethod
-        
         tp_rank = get_tensor_model_parallel_rank()
         tp_size = get_tensor_model_parallel_world_size()
         input_dim = getattr(param, "input_dim", None)
@@ -1530,18 +1316,13 @@ class RowParallelLinear(LinearBase):
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
         
-        if isinstance(self.quant_method, DUALFPLinearMethod):
-
+        from vllm.model_executor.layers.quantization.nestedfp import NestedFPLinearMethod
+        if isinstance(self.quant_method, NestedFPLinearMethod):
             self.divide_fp16(param, param.data)
-
-
 
     def weight_loader_v2(self, param: BasevLLMParameter,
                          loaded_weight: torch.Tensor):
 
-        
-        from vllm.model_executor.layers.quantization.dualfp import DUALFPLinearMethod
-        
         # Special case for loading scales off disk, which often do not
         # have a shape (such as in the case of AutoFP8).
         if len(loaded_weight.shape) == 0:
@@ -1550,8 +1331,8 @@ class RowParallelLinear(LinearBase):
 
         param.load_row_parallel_weight(loaded_weight=loaded_weight)
         
-        if isinstance(self.quant_method, DUALFPLinearMethod):
-
+        from vllm.model_executor.layers.quantization.nestedfp import NestedFPLinearMethod
+        if isinstance(self.quant_method, NestedFPLinearMethod):
             self.divide_fp16(param, param.data)
 
     def forward(
@@ -1668,6 +1449,7 @@ class QKVCrossParallelLinear(LinearBase):
             prefix=f"{prefix}.kv_proj_encoder")
 
         # `kv_proj_encoder.num_kv_heads` accounts for sharding with tp>1.
+        self.q_size = self.q_proj_decoder.output_size_per_partition
         self.kv_size = self.kv_proj_encoder.num_kv_heads * head_size
 
         if bias:
@@ -1679,20 +1461,31 @@ class QKVCrossParallelLinear(LinearBase):
         else:
             self.bias = None
 
+    def process_weights_after_loading(self):
+        for layer in self.proj.values():
+            if self.quant_method is not None:
+                self.quant_method.process_weights_after_loading(layer)
+
     @property
     def q_proj_decoder(self) -> ColumnParallelLinear:
         layer = self.proj["q_proj_decoder"]
         for name, param in self.named_parameters():
-            target_param = getattr(layer, name)
-            self.sync_weight_attrs(param, target_param, mode="q_proj_decoder")
+            target_param = getattr(layer, name, None)
+            if target_param is not None:
+                self.sync_weight_attrs(param,
+                                       target_param,
+                                       mode="q_proj_decoder")
         return layer
 
     @property
     def kv_proj_encoder(self) -> QKVParallelLinear:
         layer = self.proj["kv_proj_encoder"]
         for name, param in self.named_parameters():
-            target_param = getattr(layer, name)
-            self.sync_weight_attrs(param, target_param, mode="kv_proj_encoder")
+            target_param = getattr(layer, name, None)
+            if target_param is not None:
+                self.sync_weight_attrs(param,
+                                       target_param,
+                                       mode="kv_proj_encoder")
         return layer
 
     def sync_weight_attrs(
@@ -1781,11 +1574,14 @@ class QKVCrossParallelLinear(LinearBase):
                  if loaded_shard_id == "q" else self.kv_proj_encoder)
         target_param = self.select_proj_params(layer, param)
         shard_id_args = (loaded_shard_id, ) if loaded_shard_id != "q" else ()
-        layer.weight_loader(target_param, loaded_weight, *shard_id_args)
+        if self.quant_method.__class__.__name__ in WEIGHT_LOADER_V2_SUPPORTED:
+            layer.weight_loader_v2(target_param, loaded_weight, *shard_id_args)
+        else:
+            layer.weight_loader(target_param, loaded_weight, *shard_id_args)
 
     def extra_repr(self) -> str:
         s = f"in_features={self.input_size}"
-        s += f", q_size={self.q_proj_decoder.output_size_per_partition}"
+        s += f", q_size={self.q_size}"
         s += f", kv_size={self.kv_size}"
         s += f", bias={self.bias is not None}"
         s += f", tp_size={get_tensor_model_parallel_world_size()}"
