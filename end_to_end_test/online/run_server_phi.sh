@@ -1,2 +1,2 @@
-CUDA_VISIBLE_DEVICES=2 python vllm_simple_server.py --model /home/ubuntu/models/phi-4 --port 8002 --quantization nestedfp
-# CUDA_VISIBLE_DEVICES=2 python vllm_simple_server.py --model /home/ubuntu/models/phi-4 --port 8002 
+# CUDA_VISIBLE_DEVICES=2 python vllm_simple_server.py --model /home/ubuntu/models/phi-4 --port 8002 --quantization nestedfp
+CUDA_VISIBLE_DEVICES=2 python vllm_simple_server.py --model /home/ubuntu/models/phi-4 --port 8002 

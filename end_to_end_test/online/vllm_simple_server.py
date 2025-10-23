@@ -32,7 +32,7 @@ parser.add_argument("--max-model-len", type=int,
                     default=16384,
                     help="Maximum model length (default: 16384)")
 parser.add_argument("--max-num-batched-tokens", type=int,
-                    default=2048,
+                    default=16384,
                     help="Maximum number of batched tokens (default: 2048)")
 
 parser.add_argument("--enforce-eager", action="store_true",
@@ -64,7 +64,7 @@ print(f"Max Num Batched Tokens: {args.max_num_batched_tokens}")
 print(f"{'='*80}\n")
 
 # Engine args 동적 생성
-max_batch = 2048
+max_batch = 8192
 CAPTURE_SIZES = [512, 256, 128, 64, 32, 16, 8, 4, 2, 1]
 capture_sizes = [s for s in CAPTURE_SIZES if s <= max_batch]
 
@@ -76,6 +76,7 @@ engine_args_dict = {
     "gpu_memory_utilization": args.gpu,
     "max_num_batched_tokens": args.max_num_batched_tokens,
     "max_model_len": args.max_model_len,
+    # "max_num_seqs": 512,
 }
 
 if not args.enforce_eager:

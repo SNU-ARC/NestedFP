@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=6 python vllm_simple_server.py --model /home/ubuntu/models/phi-4 --port 8006 --quantization nestedfp

@@ -964,7 +964,7 @@ async def run_throughput_sweep(
 
     # ✅ 모델명 기반 단일 sweep 파일 생성
     model_tag = os.path.basename(model_name.rstrip("/"))
-    sweep_file = f"throughput_sweep_{model_tag}.json"
+    sweep_file = f"throughput_sweep_{model_tag}_{nestedfp}.json"
 
     # 구조화된 결과 저장
     output_data = {
@@ -1149,6 +1149,10 @@ async def main():
                        default="32,64,128,256,512",
                        help="Comma-separated list of batch sizes (default: '32,64,128,256,512')")
     
+    parser.add_argument("--nestedfp", 
+                       action="store_true",
+                       help="Use nested FP16 model if set")
+    
     args = parser.parse_args()
     
     # URL 검증 및 수정
@@ -1169,8 +1173,7 @@ async def main():
             else:
                 # 기본값: 8개의 조합
                 combinations = [
-                    (128, 32), (256, 32), (512, 32), (1024, 32),
-                    (128, 512), (256, 512), (512, 512), (1024, 512)
+                    (32, 32), (32, 512)
                 ]
             
             # Parse batch sizes
@@ -1182,7 +1185,7 @@ async def main():
                 model_name=args.model,
                 input_output_combinations=combinations,
                 batch_sizes=batch_sizes,
-                nestedfp=False
+                nestedfp=args.nestedfp,
             )
         else:
             # Trace-based Test 실행

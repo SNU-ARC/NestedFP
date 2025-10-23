@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=7 python vllm_simple_server.py --model /home/ubuntu/models/Mistral-Small-24B-Base-2501 --port 8007 --quantization nestedfp

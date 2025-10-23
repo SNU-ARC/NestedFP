@@ -1,2 +1,2 @@
-CUDA_VISIBLE_DEVICES=3 python vllm_simple_server.py --model /home/ubuntu/models/Mistral-Small-24B-Base-2501 --port 8003 --quantization nestedfp
-# CUDA_VISIBLE_DEVICES=3 python vllm_simple_server.py --model /home/ubuntu/models/Mistral-Small-24B-Base-2501 --port 8003
+# CUDA_VISIBLE_DEVICES=3 python vllm_simple_server.py --model /home/ubuntu/models/Mistral-Small-24B-Base-2501 --port 8003 --quantization nestedfp
+CUDA_VISIBLE_DEVICES=3 python vllm_simple_server.py --model /home/ubuntu/models/Mistral-Small-24B-Base-2501 --port 8003

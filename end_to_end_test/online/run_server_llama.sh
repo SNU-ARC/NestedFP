@@ -1,2 +1,2 @@
-CUDA_VISIBLE_DEVICES=0 python vllm_simple_server.py --model /home/ubuntu/models/Llama-3.1-8B --port 8000 --quantization nestedfp
-# CUDA_VISIBLE_DEVICES=0 python vllm_simple_server.py --model /home/ubuntu/models/Llama-3.1-8B --port 8000
+# CUDA_VISIBLE_DEVICES=0 python vllm_simple_server.py --model /home/ubuntu/models/Llama-3.1-8B --port 8000 --quantization nestedfp
+CUDA_VISIBLE_DEVICES=0 python vllm_simple_server.py --model /home/ubuntu/models/Llama-3.1-8B --port 8000
