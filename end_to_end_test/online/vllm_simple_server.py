@@ -28,10 +28,10 @@ app.add_middleware(
 
 engine_args = AsyncEngineArgs(
     # model="Qwen/Qwen2.5-7B",
-    model = "/disk2/models/Llama-3.1-70B",
-    tensor_parallel_size=8,
+    model = "/home/ubuntu/models/Llama-3.1-70B",
+    tensor_parallel_size=4,
     dtype="float16",
-    # quantization="nestedfp",
+    quantization="nestedfp",
     enable_prefix_caching=False,
     gpu_memory_utilization=args.gpu,
     max_num_batched_tokens=2048,

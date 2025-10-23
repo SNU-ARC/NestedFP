@@ -443,7 +443,7 @@ class Scheduler(SchedulerInterface):
 
         
         
-        #### Simple decision of dynamic switching between nestedfp 16 and nestedfp 8
+        #### Dynamic Switching between FP8 <-> FP16 based on load condition.
         # token_budget_half = self.max_num_scheduled_tokens // 2
         # use_fp8_mode = total_num_scheduled_tokens > token_budget_half
         # NestedFPGlobalState.set_modes(use_nestedfp = True, use_fp8 = use_fp8_mode)

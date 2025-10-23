@@ -1,0 +1,158 @@
+[INFO] Running ACC eval (NestedFP) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-70B | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B_bbh_zeroshot_8GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B_bbh_zeroshot_8GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-70B | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B_minerva_math_8GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B_minerva_math_8GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-70B | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B_leaderboard_mmlu_pro_8GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B_leaderboard_mmlu_pro_8GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/DeepSeek-R1-Distill-Llama-70B | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B_bbh_zeroshot_8GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B_bbh_zeroshot_8GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/DeepSeek-R1-Distill-Llama-70B | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B_minerva_math_8GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B_minerva_math_8GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/DeepSeek-R1-Distill-Llama-70B | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B_leaderboard_mmlu_pro_8GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B_leaderboard_mmlu_pro_8GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 0 (1 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-8B | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B_bbh_zeroshot_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 1 (1 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-8B-FP8-Dynamic-Half | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B-FP8-Dynamic-Half_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 2 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Nemo-Base-2407 | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407_bbh_zeroshot_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 3 (1 total)
+[INFO] Running ACC eval (Baseline) on GPUs 5 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Nemo-Base-2407-FP8-Dynamic-Half | Task: bbh_zeroshot
+[INFO] Model: /home/ubuntu/models/phi-4-FP8-Dynamic-Half | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407-FP8-Dynamic-Half_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4-FP8-Dynamic-Half_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 6 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501 | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_bbh_zeroshot_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 7 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 4 (1 total)
+[INFO] Model: /home/ubuntu/models/phi-4 | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4_bbh_zeroshot_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4_bbh_zeroshot_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 4 (1 total)
+[INFO] Model: /home/ubuntu/models/phi-4 | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4_minerva_math_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4_minerva_math_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 4 (1 total)
+[INFO] Model: /home/ubuntu/models/phi-4 | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4_leaderboard_mmlu_pro_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B-FP8-Dynamic-Half_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 1 (1 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-8B-FP8-Dynamic-Half | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B-FP8-Dynamic-Half_minerva_math_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B_bbh_zeroshot_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 0 (1 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-8B | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B_minerva_math_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407_bbh_zeroshot_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 2 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Nemo-Base-2407 | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407_minerva_math_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_bbh_zeroshot_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 6 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501 | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_minerva_math_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4_leaderboard_mmlu_pro_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 7 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half_minerva_math_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407-FP8-Dynamic-Half_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 3 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Nemo-Base-2407-FP8-Dynamic-Half | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407-FP8-Dynamic-Half_minerva_math_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4-FP8-Dynamic-Half_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 5 (1 total)
+[INFO] Model: /home/ubuntu/models/phi-4-FP8-Dynamic-Half | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4-FP8-Dynamic-Half_minerva_math_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B-FP8-Dynamic-Half_minerva_math_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 1 (1 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-8B-FP8-Dynamic-Half | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B-FP8-Dynamic-Half_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B_minerva_math_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 0 (1 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-8B | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B_leaderboard_mmlu_pro_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407_minerva_math_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 2 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Nemo-Base-2407 | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407_leaderboard_mmlu_pro_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_minerva_math_1GPU_NestedFP_run1.log
+[INFO] Running ACC eval (NestedFP) on GPUs 6 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501 | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_leaderboard_mmlu_pro_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407-FP8-Dynamic-Half_minerva_math_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 3 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Nemo-Base-2407-FP8-Dynamic-Half | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407-FP8-Dynamic-Half_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half_minerva_math_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 7 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4-FP8-Dynamic-Half_minerva_math_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 5 (1 total)
+[INFO] Model: /home/ubuntu/models/phi-4-FP8-Dynamic-Half | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4-FP8-Dynamic-Half_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B_leaderboard_mmlu_pro_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-8B-FP8-Dynamic-Half_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407_leaderboard_mmlu_pro_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Nemo-Base-2407-FP8-Dynamic-Half_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/phi-4-FP8-Dynamic-Half_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_leaderboard_mmlu_pro_1GPU_NestedFP_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501-FP8-Dynamic-Half_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-70B-FP8-Dynamic-Half | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B-FP8-Dynamic-Half_bbh_zeroshot_8GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B-FP8-Dynamic-Half_bbh_zeroshot_8GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-70B-FP8-Dynamic-Half | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B-FP8-Dynamic-Half_minerva_math_8GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B-FP8-Dynamic-Half_minerva_math_8GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/Llama-3.1-70B-FP8-Dynamic-Half | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B-FP8-Dynamic-Half_leaderboard_mmlu_pro_8GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Llama-3.1-70B-FP8-Dynamic-Half_leaderboard_mmlu_pro_8GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half_bbh_zeroshot_8GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half_bbh_zeroshot_8GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half_minerva_math_8GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half_minerva_math_8GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 0,1,2,3,4,5,6,7 (8 total)
+[INFO] Model: /home/ubuntu/models/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half_leaderboard_mmlu_pro_8GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/DeepSeek-R1-Distill-Llama-70B-FP8-Dynamic-Half_leaderboard_mmlu_pro_8GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 0 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501 | Task: bbh_zeroshot
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_bbh_zeroshot_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 1 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501 | Task: minerva_math
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_minerva_math_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 2 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501 | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_leaderboard_mmlu_pro_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_bbh_zeroshot_1GPU_Baseline_run1.log
+[DONE] Output saved to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_minerva_math_1GPU_Baseline_run1.log
+[INFO] Running ACC eval (Baseline) on GPUs 7 (1 total)
+[INFO] Model: /home/ubuntu/models/Mistral-Small-24B-Base-2501 | Task: leaderboard_mmlu_pro
+[INFO] Logging to /home/ubuntu/NestedFP/scripts/../results/acc_eval/Mistral-Small-24B-Base-2501_leaderboard_mmlu_pro_1GPU_Baseline_run1.log

@@ -88,7 +88,7 @@ class NestedFPLinearMethod(LinearMethodBase):
         self.quant_config = quant_config
         self.weight = None
         self.is_nestedfp_enabled = True
-        self.fp8 = True
+        self.fp8 = False
 
     def create_weights(self, layer: torch.nn.Module,
                        input_size_per_partition: int,
@@ -115,6 +115,9 @@ class NestedFPLinearMethod(LinearMethodBase):
         # 글로벌 상태에서 모드 가져오기
         current_nestedfp_enabled = self.is_nestedfp_enabled
         current_fp8_mode = self.fp8
+        
+        # print("Current_NestedFP_Enabled:", current_nestedfp_enabled)
+        # print("Current_FP8_Mode:", current_fp8_mode)
 
         
         def fp16_to_fp8(x, dtype=torch.float8_e4m3fn):

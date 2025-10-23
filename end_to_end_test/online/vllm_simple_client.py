@@ -162,8 +162,7 @@ async def async_request_openai_completions(
                                 
                                 if not first_chunk_received:
                                     first_chunk_received = True
-                                    ttft = timestamp - st
-                                    print(f'{st} to {timestamp}: so ttft is {ttft}')
+                                    ttft = time.perf_counter() - st  # ✅ 클라이언트 기준
                                     output.ttft = ttft
                                     ttft_graph['iteration_step'].append(iteration_total)
                                     ttft_graph['ttft'].append(ttft)
@@ -732,6 +731,255 @@ def create_performance_scatter_plots(results, middle_ratio=0.8):
     
     return stats, success_count
 
+
+
+async def run_throughput_test(
+    api_url,
+    model_name,
+    input_len=512,
+    output_len=32,
+    num_requests=512,
+    nestedfp=False,
+):
+    """
+    Throughput Test: 모든 요청을 동시에 전송하여 offline serving E2E latency 측정
+    """
+    print(f"\n--- Running Throughput Test ---")
+    print(f"Configuration:")
+    print(f"  Model: {model_name}")
+    print(f"  Nested FP: {nestedfp}")
+    print(f"  Input length: {input_len} tokens")
+    print(f"  Output length: {output_len} tokens")
+    print(f"  Number of requests: {num_requests}")
+
+    # 전역 변수 초기화
+    global iteration_details
+    iteration_details.clear()
+
+    # prompt 생성
+    print(f"\nGenerating prompts with tokenizer: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    words = [
+        "hello",
+        "world",
+        "test",
+        "data",
+        "model",
+        "training",
+        "computer",
+        "science",
+        "artificial",
+        "intelligence",
+        "machine",
+        "learning",
+        "neural",
+        "network",
+        "transformer",
+        "attention",
+        "embedding",
+        "layer",
+        "parameter",
+        "gradient",
+        "system",
+        "processing",
+        "algorithm",
+        "function",
+        "method",
+        "class",
+        "object",
+        "memory",
+        "storage",
+        "database",
+        "server",
+        "client",
+        "protocol",
+        "interface",
+    ]
+
+    prompts = []
+    for i in range(num_requests):
+        random.seed(i)
+        selected_words = random.choices(words, k=input_len * 2)
+        prompt = " ".join(selected_words)
+        encoded = tokenizer.encode(prompt, add_special_tokens=False)
+        if len(encoded) > input_len:
+            truncated_tokens = encoded[:input_len]
+            prompt = tokenizer.decode(truncated_tokens)
+        elif len(encoded) < input_len:
+            while len(encoded) < input_len:
+                additional_word = random.choice(words)
+                test_prompt = prompt + " " + additional_word
+                test_encoded = tokenizer.encode(test_prompt, add_special_tokens=False)
+                if len(test_encoded) <= input_len:
+                    prompt = test_prompt
+                    encoded = test_encoded
+                else:
+                    break
+        prompts.append(prompt)
+
+    print(f"All prompts generated ({len(prompts)})")
+
+    # 모든 요청을 동시에 전송
+    print(f"\nSending all {num_requests} requests simultaneously...")
+    experiment_start_time = time.perf_counter()
+
+    tasks = []
+    for i in range(num_requests):
+        input_obj = RequestFuncInput(
+            prompt=prompts[i],
+            api_url=api_url,
+            prompt_len=input_len,
+            output_len=output_len,
+            model=model_name,
+        )
+        task = asyncio.create_task(async_request_openai_completions(input_obj))
+        tasks.append((task, i))
+
+    print(f"All requests sent at {experiment_start_time:.6f}s")
+    print("Waiting for all responses...")
+
+    results = []
+    for task, request_id in tasks:
+        result = await task
+        actual_generated_tokens = (
+            len(result.itl) + 1 if result.success and result.itl else 0
+        )
+        results.append(
+            {
+                "request_id": request_id,
+                "context_tokens": input_len,
+                "generated_tokens": output_len,
+                "actual_generated_tokens": actual_generated_tokens,
+                "success": result.success,
+                "latency": result.latency,
+                "ttft": result.ttft,
+                "tpot": result.tpot,
+                "error": result.error,
+                "request_sent_time": result.request_sent_time,
+                "request_completed_time": result.request_completed_time,
+                "token_arrival_times": result.token_arrival_times,
+                "itl": result.itl,
+                "iteration_data": result.iteration_data,
+            }
+        )
+
+    experiment_end_time = time.perf_counter()
+    total_experiment_time = experiment_end_time - experiment_start_time
+
+    print(f"\nAll requests completed at {experiment_end_time:.6f}s")
+    print(f"Total experiment time: {total_experiment_time:.2f}s")
+
+    # ✅ 파일명 자동 구성
+    model_tag = os.path.basename(model_name.rstrip("/"))
+    fp_tag = f"nestedfp{nestedfp}"
+    results_file = f"throughput_test_{model_tag}_{fp_tag}_request.json"
+    iteration_file = f"throughput_test_{model_tag}_{fp_tag}_iteration.json"
+    summary_file = f"throughput_test_{model_tag}_{fp_tag}_summary.json"
+
+    # Request별 결과 저장
+    with open(results_file, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"Results saved to {results_file}")
+
+    # Iteration 결과 저장
+    processed_iterations = process_iteration_details()
+    with open(iteration_file, "w") as f:
+        json.dump(processed_iterations, f, indent=2)
+    print(f"Iteration details saved to {iteration_file}")
+
+    # 통계
+    success_count = sum(1 for r in results if r["success"])
+    latencies = [r["latency"] for r in results if r["success"]]
+    ttfts = [r["ttft"] for r in results if r["success"] and r["ttft"] > 0]
+    tpots = [r["tpot"] for r in results if r["success"] and r["tpot"] > 0]
+
+    total_tokens = sum(r["actual_generated_tokens"] for r in results if r["success"])
+    throughput = total_tokens / total_experiment_time if total_experiment_time > 0 else 0
+
+    summary = {
+        "model": model_name,
+        "nestedfp": nestedfp,
+        "input_length": input_len,
+        "output_length": output_len,
+        "num_requests": num_requests,
+        "successful_requests": success_count,
+        "failed_requests": num_requests - success_count,
+        "avg_e2e_latency": float(np.mean(latencies)) if latencies else 0.0,
+        "p90_e2e_latency": float(np.percentile(latencies, 90)) if latencies else 0.0,
+        "p99_e2e_latency": float(np.percentile(latencies, 99)) if latencies else 0.0,
+        "avg_ttft": float(np.mean(ttfts)) if ttfts else 0.0,
+        "avg_tpot": float(np.mean(tpots)) if tpots else 0.0,
+        "total_tokens": total_tokens,
+        "throughput_tokens_per_sec": throughput,
+        "total_experiment_time": total_experiment_time,
+    }
+
+    with open(summary_file, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"Summary saved to {summary_file}")
+
+    return summary
+
+
+async def run_throughput_sweep(
+    api_url,
+    model_name,
+    input_len=128,
+    output_len=32,
+    batch_sizes=[32, 64, 128, 256, 512],
+    nestedfp=False,
+):
+    """
+    여러 batch size(=동시 요청 개수)에 대해 throughput test를 순차적으로 실행하고,
+    각 결과(E2E latency, throughput 등)를 하나의 파일에 저장.
+    """
+    print(f"\n=== Running Throughput Sweep ===")
+    print(f"Model: {model_name}")
+    print(f"Nested FP: {nestedfp}")
+    print(f"Batch sizes: {batch_sizes}")
+
+    sweep_results = []
+    for batch_size in batch_sizes:
+        print(f"\n>>> Running throughput test for batch size = {batch_size}")
+        summary = await run_throughput_test(
+            api_url=api_url,
+            model_name=model_name,
+            input_len=input_len,
+            output_len=output_len,
+            num_requests=batch_size,
+            nestedfp=nestedfp,
+        )
+        sweep_results.append(summary)
+
+    # ✅ 모델명 기반 sweep 파일명
+    model_tag = os.path.basename(model_name.rstrip("/"))
+    fp_tag = f"nestedfp{nestedfp}"
+    sweep_file = f"throughput_sweep_{model_tag}_{fp_tag}.json"
+
+    with open(sweep_file, "w") as f:
+        json.dump(sweep_results, f, indent=2)
+    print(f"\n✅ Sweep results saved to {sweep_file}")
+
+    print("\n=== Throughput Sweep Summary ===")
+    print(
+        f"{'Batch':>8} | {'Throughput (tok/s)':>20} | {'Avg Latency (s)':>16} | {'P99 Latency (s)':>16}"
+    )
+    print("-" * 70)
+    for entry in sweep_results:
+        print(
+            f"{entry['num_requests']:>8} | {entry['throughput_tokens_per_sec']:>20.2f} | "
+            f"{entry['avg_e2e_latency']:>16.3f} | {entry['p99_e2e_latency']:>16.3f}"
+        )
+    print("-" * 70)
+    return sweep_results
+
+
+
+
+
 async def run_experiment(trace_file, api_url, model_name, num_requests=None, duration_minutes=None, middle_ratio=0.8):
     """
     실험 실행
@@ -836,40 +1084,55 @@ async def run_experiment(trace_file, api_url, model_name, num_requests=None, dur
 
 async def main():
     parser = argparse.ArgumentParser(description="vLLM trace-based benchmark client")
+    
+    # Test mode 선택
+    parser.add_argument("--test-mode",
+                       choices=["trace", "throughput"],
+                       default="trace",
+                       help="Test mode: 'trace' for trace-based test, 'throughput' for throughput test")
+    
+    # Trace mode arguments
     parser.add_argument("--trace-file", 
-                       default="./trace/azure_conv_0514_1400_20min_15.0x_tc.csv",
-                       help="Path to trace CSV file")
+                       default="./trace/azure_conv_0514_1400_20min_10.0x_tc.csv",
+                       help="Path to trace CSV file (for trace mode)")
+    parser.add_argument("--num-requests", 
+                       type=int, 
+                       default=None,
+                       help="Number of requests to use (legacy mode, for trace mode)")
+    parser.add_argument("--duration-minutes", 
+                       type=float, 
+                       default=None,
+                       help="Duration of experiment in minutes (for trace mode)")
+    parser.add_argument("--middle-ratio", 
+                       type=float, 
+                       default=0.7,
+                       help="Ratio of middle data to use for performance stats (for trace mode)")
+    
+    # Common arguments
     parser.add_argument("--api-url", 
                        default="http://0.0.0.0:8000/v1/completions", 
                        help="vLLM server API URL")
     parser.add_argument("--model", 
-                       default="Qwen/Qwen2.5-7B",
+                       default="/home/ubuntu/models/Llama-3.1-70B",
                        help="Model name or path")
-    parser.add_argument("--num-requests", 
-                       type=int, 
-                       default=None,
-                       help="Number of requests to use (legacy mode)")
-    parser.add_argument("--duration-minutes", 
-                       type=float, 
-                       default=None,
-                       help="Duration of experiment in minutes (preferred over num-requests)")
-    parser.add_argument("--middle-ratio", 
-                       type=float, 
-                       default=0.7,
-                       help="Ratio of middle data to use for performance stats (default: 0.5)")
+    
+    # Throughput test arguments (고정값)
+    parser.add_argument("--throughput-input-len",
+                       type=int,
+                       default=128,
+                       help="Input token length for throughput test (default: 512)")
+    parser.add_argument("--throughput-output-len",
+                       type=int,
+                       default=32,
+                       help="Output token length for throughput test (default: 32)")
+    parser.add_argument("--throughput-num-requests",
+                       type=int,
+                       default=32,
+                       help="Number of requests for throughput test (default: 512)")
     
     args = parser.parse_args()
     
-    # 두 파라미터가 모두 없는 경우 기본값 설정
-    if args.num_requests is None and args.duration_minutes is None:
-        args.duration_minutes = 20.0  # 기본값: 20 minutes
-        print("No duration or num_requests specified, using default: 20 minutes")
-    
-    # 두 파라미터가 모두 제공된 경우 에러
-    if args.num_requests is not None and args.duration_minutes is not None:
-        print("Error: Cannot specify both --num-requests and --duration-minutes. Please use only one.")
-        return
-    
+    # URL 검증 및 수정
     if not args.api_url.endswith(("completions", "profile")):
         if not args.api_url.endswith('/'):
             args.api_url += '/v1/completions'
@@ -877,14 +1140,36 @@ async def main():
             args.api_url += 'v1/completions'
     
     try:
-        await run_experiment(
-            args.trace_file, 
-            args.api_url, 
-            args.model, 
-            num_requests=args.num_requests,
-            duration_minutes=args.duration_minutes,
-            middle_ratio=args.middle_ratio
-        )
+        if args.test_mode == "throughput":
+            # Throughput Test 실행
+            await run_throughput_sweep(
+                api_url=args.api_url,
+                model_name=args.model,
+                input_len=args.throughput_input_len,
+                output_len=args.throughput_output_len,
+                batch_sizes=[32, 64, 128, 256, 512],
+                nestedfp=False
+            )
+        else:
+            # Trace-based Test 실행
+            # 두 파라미터가 모두 없는 경우 기본값 설정
+            if args.num_requests is None and args.duration_minutes is None:
+                args.duration_minutes = 20.0  # 기본값: 20 minutes
+                print("No duration or num_requests specified, using default: 20 minutes")
+            
+            # 두 파라미터가 모두 제공된 경우 에러
+            if args.num_requests is not None and args.duration_minutes is not None:
+                print("Error: Cannot specify both --num-requests and --duration-minutes. Please use only one.")
+                return
+            
+            await run_experiment(
+                args.trace_file, 
+                args.api_url, 
+                args.model, 
+                num_requests=args.num_requests,
+                duration_minutes=args.duration_minutes,
+                middle_ratio=args.middle_ratio
+            )
     except ValueError as e:
         print(f"Error: {e}")
         return

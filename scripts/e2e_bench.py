@@ -36,7 +36,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Simple vLLM latency benchmark")
     p.add_argument("--model", required=True, help="Model path")
     p.add_argument("--nestedfp", action="store_true",
-                   help="If set, enable dualfp quantization and add '_nestedfp' tag to outfile.")
+                   help="If set, enable nestedfp quantization and add '_nestedfp' tag to outfile.")
     return p.parse_args()
 
 
@@ -83,10 +83,11 @@ def main():
                 "max_capture_size": batch_size,
             },
             gpu_memory_utilization=0.97,
+            load_format="dummy",
         )
 
         if args.nestedfp:
-            llm_kwargs["quantization"] = "dualfp"
+            llm_kwargs["quantization"] = "nestedfp"
 
         llm = LLM(**llm_kwargs)
 
