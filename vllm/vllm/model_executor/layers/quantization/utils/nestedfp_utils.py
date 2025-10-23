@@ -523,6 +523,7 @@ def fp16_custom(
                     (448, "stream_12"),
                     (480, "stream_12"),
                     (512, "stream_12"),
+                    (float("inf"), "stream_12"),
             ]
         elif (N,K) == (7680, 5120):
             range_kernel_map = [
@@ -542,6 +543,7 @@ def fp16_custom(
                     (448, "custom_48"),
                     (480, "custom_48"),
                     (512, "custom_48"),
+                    (float("inf"), "custom_48"),
             ] 
         elif (N,K) == (35840, 5120):
             range_kernel_map = [
@@ -561,6 +563,7 @@ def fp16_custom(
                     (448, "stream_12"),
                     (480, "stream_12"),
                     (512, "stream_12"),
+                    (float("inf"), "stream_12"),
             ]       
         # Base Case
         else:
@@ -853,6 +856,7 @@ def fp8_custom(
                     (448, "fp8_48"),
                     (480, "fp8_48"),
                     (512, "fp8_48"),
+                    (float("inf"), "fp8_48"),
             ]
         elif (N,K) == (7680, 5120):
             range_kernel_map = [
@@ -872,6 +876,7 @@ def fp8_custom(
                     (448, "fp8_48"),
                     (480, "fp8_48"),
                     (512, "fp8_48"),
+                    (float("inf"), "fp8_48"),
             ] 
         elif (N,K) == (35840, 5120):
             range_kernel_map = [
@@ -891,6 +896,7 @@ def fp8_custom(
                     (448, "fp8_48"),
                     (480, "fp8_48"),
                     (512, "fp8_48"),
+                    (float("inf"), "fp8_48"),
             ]       
         
         else:

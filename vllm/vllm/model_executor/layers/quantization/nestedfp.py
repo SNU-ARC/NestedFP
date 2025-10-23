@@ -88,7 +88,7 @@ class NestedFPLinearMethod(LinearMethodBase):
         self.quant_config = quant_config
         self.weight = None
         self.is_nestedfp_enabled = True
-        self.fp8 = False
+        self.fp8 = True
 
     def create_weights(self, layer: torch.nn.Module,
                        input_size_per_partition: int,
