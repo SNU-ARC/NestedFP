@@ -1,0 +1,1 @@
+python vllm_simple_client.py --model /home/ubuntu/models/Llama-3.1-70B --api-url http://0.0.0.0:8070/v1/completions --test-mode throughput

@@ -1,0 +1,1 @@
+python vllm_simple_client.py --model /home/ubuntu/models/Mistral-Nemo-Base-2407 --api-url http://0.0.0.0:8001/v1/completions --test-mode throughput

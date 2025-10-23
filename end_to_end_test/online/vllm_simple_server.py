@@ -10,9 +10,33 @@ import argparse
 
 from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--port", type=int, help="port", default=8000)
-parser.add_argument("--gpu", type=float, help="gpu-memory-utilization", default=0.9)
+# ===== Argument Parser =====
+parser = argparse.ArgumentParser(description="vLLM Server with configurable options")
+parser.add_argument("--model", type=str, 
+                    default="/home/ubuntu/models/Llama-3.1-8B",
+                    help="Model path (default: /home/ubuntu/models/Llama-3.1-8B)")
+parser.add_argument("--port", type=int, 
+                    default=8000,
+                    help="Server port (default: 8000)")
+parser.add_argument("--gpu", type=float, 
+                    default=0.9,
+                    help="GPU memory utilization (default: 0.9)")
+parser.add_argument("--quantization", type=str, 
+                    default=None,
+                    choices=["nestedfp", "awq", "gptq", "fp8", None],
+                    help="Quantization method (default: None for no quantization)")
+parser.add_argument("--tensor-parallel-size", type=int,
+                    default=1,
+                    help="Tensor parallel size (default: 1)")
+parser.add_argument("--max-model-len", type=int,
+                    default=16384,
+                    help="Maximum model length (default: 16384)")
+parser.add_argument("--max-num-batched-tokens", type=int,
+                    default=2048,
+                    help="Maximum number of batched tokens (default: 2048)")
+
+parser.add_argument("--enforce-eager", action="store_true",
+                    help="Disable CUDA graph and use eager mode")
 
 args = parser.parse_args()
 
@@ -26,18 +50,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-engine_args = AsyncEngineArgs(
-    # model="Qwen/Qwen2.5-7B",
-    model = "/home/ubuntu/models/Llama-3.1-70B",
-    tensor_parallel_size=4,
-    dtype="float16",
-    quantization="nestedfp",
-    enable_prefix_caching=False,
-    gpu_memory_utilization=args.gpu,
-    max_num_batched_tokens=2048,
-    max_model_len= 16384,
-    enforce_eager= True,
-)
+# ===== Engine Configuration =====
+print(f"\n{'='*80}")
+print("vLLM Server Configuration")
+print(f"{'='*80}")
+print(f"Model: {args.model}")
+print(f"Port: {args.port}")
+print(f"Quantization: {args.quantization if args.quantization else 'None (FP16)'}")
+print(f"GPU Memory Utilization: {args.gpu}")
+print(f"Tensor Parallel Size: {args.tensor_parallel_size}")
+print(f"Max Model Length: {args.max_model_len}")
+print(f"Max Num Batched Tokens: {args.max_num_batched_tokens}")
+print(f"{'='*80}\n")
+
+# Engine args 동적 생성
+max_batch = 2048
+CAPTURE_SIZES = [512, 256, 128, 64, 32, 16, 8, 4, 2, 1]
+capture_sizes = [s for s in CAPTURE_SIZES if s <= max_batch]
+
+engine_args_dict = {
+    "model": args.model,
+    "tensor_parallel_size": args.tensor_parallel_size,
+    "dtype": "float16",
+    "enable_prefix_caching": False,
+    "gpu_memory_utilization": args.gpu,
+    "max_num_batched_tokens": args.max_num_batched_tokens,
+    "max_model_len": args.max_model_len,
+}
+
+if not args.enforce_eager:
+    engine_args_dict["compilation_config"] = {
+        "level": 3,
+        "custom_ops": ["none"],
+        "splitting_ops": [
+            "vllm.unified_attention",
+            "vllm.unified_attention_with_output",
+        ],
+        "full_cuda_graph": True,
+        "use_inductor": True,
+        "compile_sizes": capture_sizes,
+        "use_cudagraph": True,
+        "cudagraph_num_of_warmups": 2,
+        "cudagraph_capture_sizes": capture_sizes,
+        "max_capture_size": max_batch,
+    }
+else:
+    engine_args_dict["enforce_eager"] = True
+
+# quantization이 지정된 경우에만 추가
+if args.quantization:
+    engine_args_dict["quantization"] = args.quantization
+
+# quantization이 지정된 경우에만 추가
+if args.quantization:
+    engine_args_dict["quantization"] = args.quantization
+
+engine_args = AsyncEngineArgs(**engine_args_dict)
 engine = AsyncLLMEngine.from_engine_args(engine_args)
 
 @app.post("/v1/completions")
@@ -51,7 +119,7 @@ async def completions(request: Request):
         top_p = data.get("top_p", 1.0)
         stop = data.get("stop", None)
         echo = data.get("echo", False)
-        model = "unknown"
+        model = args.model  # 실제 모델명 사용
 
         request_id = str(uuid.uuid4())
         created_time = int(time.time())

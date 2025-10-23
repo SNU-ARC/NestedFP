@@ -1,0 +1,2 @@
+CUDA_VISIBLE_DEVICES=1 python vllm_simple_server.py --model /home/ubuntu/models/Mistral-Nemo-Base-2407 --port 8001 --quantization nestedfp
+# CUDA_VISIBLE_DEVICES=1 python vllm_simple_server.py --model /home/ubuntu/models/Mistral-Nemo-Base-2407 --port 8001

@@ -872,25 +872,7 @@ async def run_throughput_test(
     print(f"\nAll requests completed at {experiment_end_time:.6f}s")
     print(f"Total experiment time: {total_experiment_time:.2f}s")
 
-    # ✅ 파일명 자동 구성
-    model_tag = os.path.basename(model_name.rstrip("/"))
-    fp_tag = f"nestedfp{nestedfp}"
-    results_file = f"throughput_test_{model_tag}_{fp_tag}_request.json"
-    iteration_file = f"throughput_test_{model_tag}_{fp_tag}_iteration.json"
-    summary_file = f"throughput_test_{model_tag}_{fp_tag}_summary.json"
-
-    # Request별 결과 저장
-    with open(results_file, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"Results saved to {results_file}")
-
-    # Iteration 결과 저장
-    processed_iterations = process_iteration_details()
-    with open(iteration_file, "w") as f:
-        json.dump(processed_iterations, f, indent=2)
-    print(f"Iteration details saved to {iteration_file}")
-
-    # 통계
+    # 통계 (파일 저장 없이 summary만 반환)
     success_count = sum(1 for r in results if r["success"])
     latencies = [r["latency"] for r in results if r["success"]]
     ttfts = [r["ttft"] for r in results if r["success"] and r["ttft"] > 0]
@@ -917,64 +899,105 @@ async def run_throughput_test(
         "total_experiment_time": total_experiment_time,
     }
 
-    with open(summary_file, "w") as f:
-        json.dump(summary, f, indent=2)
-    print(f"Summary saved to {summary_file}")
-
+    # 파일 저장 없이 summary만 반환
     return summary
 
 
 async def run_throughput_sweep(
     api_url,
     model_name,
-    input_len=128,
-    output_len=32,
+    input_output_combinations=None,
     batch_sizes=[32, 64, 128, 256, 512],
     nestedfp=False,
 ):
     """
-    여러 batch size(=동시 요청 개수)에 대해 throughput test를 순차적으로 실행하고,
+    여러 (input_len, output_len) 조합과 batch size에 대해 throughput test를 순차적으로 실행하고,
     각 결과(E2E latency, throughput 등)를 하나의 파일에 저장.
+    
+    Args:
+        input_output_combinations: List of (input_len, output_len) tuples
+                                   기본값: [(128,32), (256,32), (512,32), (1024,32),
+                                            (128,512), (256,512), (512,512), (1024,512)]
     """
-    print(f"\n=== Running Throughput Sweep ===")
+    # 기본 조합 설정
+    if input_output_combinations is None:
+        input_output_combinations = [
+            (128, 32), (256, 32), (512, 32), (1024, 32),
+            (128, 512), (256, 512), (512, 512), (1024, 512)
+        ]
+    
+    print(f"\n{'='*80}")
+    print("THROUGHPUT SWEEP TEST - MULTIPLE CONFIGURATIONS")
+    print(f"{'='*80}")
     print(f"Model: {model_name}")
     print(f"Nested FP: {nestedfp}")
+    print(f"Input/Output combinations: {input_output_combinations}")
     print(f"Batch sizes: {batch_sizes}")
+    print(f"{'='*80}\n")
 
-    sweep_results = []
-    for batch_size in batch_sizes:
-        print(f"\n>>> Running throughput test for batch size = {batch_size}")
-        summary = await run_throughput_test(
-            api_url=api_url,
-            model_name=model_name,
-            input_len=input_len,
-            output_len=output_len,
-            num_requests=batch_size,
-            nestedfp=nestedfp,
-        )
-        sweep_results.append(summary)
+    all_results = []
+    
+    # Loop through each (input, output) combination
+    for input_len, output_len in input_output_combinations:
+        print(f"\n{'#'*80}")
+        print(f"# Testing configuration: Input={input_len}, Output={output_len}")
+        print(f"{'#'*80}")
+        
+        # Loop through each batch size for this combination
+        for batch_size in batch_sizes:
+            print(f"\n>>> Running throughput test for batch size = {batch_size}")
+            summary = await run_throughput_test(
+                api_url=api_url,
+                model_name=model_name,
+                input_len=input_len,
+                output_len=output_len,
+                num_requests=batch_size,
+                nestedfp=nestedfp,
+            )
+            
+            # 결과에 input/output 정보 추가
+            summary["input_len"] = input_len
+            summary["output_len"] = output_len
+            summary["batch_size"] = batch_size
+            
+            all_results.append(summary)
 
-    # ✅ 모델명 기반 sweep 파일명
+    # ✅ 모델명 기반 단일 sweep 파일 생성
     model_tag = os.path.basename(model_name.rstrip("/"))
-    fp_tag = f"nestedfp{nestedfp}"
-    sweep_file = f"throughput_sweep_{model_tag}_{fp_tag}.json"
+    sweep_file = f"throughput_sweep_{model_tag}.json"
 
+    # 구조화된 결과 저장
+    output_data = {
+        "model": model_name,
+        "model_short_name": model_tag,
+        "nestedfp": nestedfp,
+        "test_configurations": {
+            "input_output_combinations": input_output_combinations,
+            "batch_sizes": batch_sizes
+        },
+        "results": all_results
+    }
+    
     with open(sweep_file, "w") as f:
-        json.dump(sweep_results, f, indent=2)
-    print(f"\n✅ Sweep results saved to {sweep_file}")
+        json.dump(output_data, f, indent=2)
+    print(f"\n{'='*80}")
+    print(f"✅ All sweep results saved to {sweep_file}")
+    print(f"Total configurations tested: {len(all_results)}")
+    print(f"{'='*80}\n")
 
+    # 요약 테이블 출력
     print("\n=== Throughput Sweep Summary ===")
-    print(
-        f"{'Batch':>8} | {'Throughput (tok/s)':>20} | {'Avg Latency (s)':>16} | {'P99 Latency (s)':>16}"
-    )
-    print("-" * 70)
-    for entry in sweep_results:
+    print(f"{'Input':>6} | {'Output':>6} | {'Batch':>6} | {'Throughput':>12} | {'Avg E2E':>10} | {'Total Tokens':>12}")
+    print(f"{'(tok)':>6} | {'(tok)':>6} | {'Size':>6} | {'(tok/s)':>12} | {'Latency(s)':>10} | {'':>12}")
+    print("-" * 85)
+    for entry in all_results:
         print(
-            f"{entry['num_requests']:>8} | {entry['throughput_tokens_per_sec']:>20.2f} | "
-            f"{entry['avg_e2e_latency']:>16.3f} | {entry['p99_e2e_latency']:>16.3f}"
+            f"{entry['input_length']:>6} | {entry['output_length']:>6} | {entry['num_requests']:>6} | "
+            f"{entry['throughput_tokens_per_sec']:>12.2f} | {entry['avg_e2e_latency']:>10.3f} | "
+            f"{entry['total_tokens']:>12}"
         )
-    print("-" * 70)
-    return sweep_results
+    print("-" * 85)
+    return all_results
 
 
 
@@ -1113,22 +1136,18 @@ async def main():
                        default="http://0.0.0.0:8000/v1/completions", 
                        help="vLLM server API URL")
     parser.add_argument("--model", 
-                       default="/home/ubuntu/models/Llama-3.1-70B",
+                       default="/home/ubuntu/models/Llama-3.1-8B",
                        help="Model name or path")
     
-    # Throughput test arguments (고정값)
-    parser.add_argument("--throughput-input-len",
-                       type=int,
-                       default=128,
-                       help="Input token length for throughput test (default: 512)")
-    parser.add_argument("--throughput-output-len",
-                       type=int,
-                       default=32,
-                       help="Output token length for throughput test (default: 32)")
-    parser.add_argument("--throughput-num-requests",
-                       type=int,
-                       default=32,
-                       help="Number of requests for throughput test (default: 512)")
+    # Throughput test arguments
+    parser.add_argument("--throughput-input-output-combinations",
+                       type=str,
+                       default=None,
+                       help="Comma-separated list of input,output pairs (e.g., '128,32;256,32;512,32')")
+    parser.add_argument("--throughput-batch-sizes",
+                       type=str,
+                       default="32,64,128,256,512",
+                       help="Comma-separated list of batch sizes (default: '32,64,128,256,512')")
     
     args = parser.parse_args()
     
@@ -1141,13 +1160,28 @@ async def main():
     
     try:
         if args.test_mode == "throughput":
+            # Parse input/output combinations
+            if args.throughput_input_output_combinations:
+                combinations = []
+                for pair in args.throughput_input_output_combinations.split(';'):
+                    inp, out = map(int, pair.split(','))
+                    combinations.append((inp, out))
+            else:
+                # 기본값: 8개의 조합
+                combinations = [
+                    (128, 32), (256, 32), (512, 32), (1024, 32),
+                    (128, 512), (256, 512), (512, 512), (1024, 512)
+                ]
+            
+            # Parse batch sizes
+            batch_sizes = [int(x) for x in args.throughput_batch_sizes.split(',')]
+            
             # Throughput Test 실행
             await run_throughput_sweep(
                 api_url=args.api_url,
                 model_name=args.model,
-                input_len=args.throughput_input_len,
-                output_len=args.throughput_output_len,
-                batch_sizes=[32, 64, 128, 256, 512],
+                input_output_combinations=combinations,
+                batch_sizes=batch_sizes,
                 nestedfp=False
             )
         else:
