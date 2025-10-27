@@ -4,13 +4,14 @@
 
 **NestedFP** is a high-performance, memory-efficient dual-precision framework for LLM serving that enables both FP8 and FP16 inference from a single 16-bit model without additional memory overhead. It introduces a lightweight FP16→(FP8 + residual) decomposition and a custom CUTLASS-based kernel integrated into vLLM, achieving up to 1.55× throughput improvement in FP8 mode with accuracy comparable to standard quantized FP8 models. It also retains full FP16 precision capability for dynamic, SLO-aware serving.
 
+> ⚠️ **Note:** NestedFP now supports **vLLM 0.8.5**, but this README still describes the installation process for **vLLM 0.8.3**. The setup guide for vLLM 0.8.5 and the instructions for running the updated end-to-end evaluation process will be added soon. The Python package list is provided in **`nestedfp.yml`**. You can adjust the directory paths inside the YAML file and remove the **`vllm`** and **`cutlass`** packages before creating the environment, as both require manual reinstallation.
+
 ## Requirements
 
 * **Ubuntu 22.04**
-* **CUDA 12.4**
+* **CUDA 12.6**
 
 ## Setup
-
 ```bash
 # 1. Clone NestedFP repository
 git clone https://github.com/SNU-ARC/NestedFP.git
