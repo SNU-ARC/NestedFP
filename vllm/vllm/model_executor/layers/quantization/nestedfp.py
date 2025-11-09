@@ -113,13 +113,13 @@ class NestedFPLinearMethod(LinearMethodBase):
         assert(bias is None)
         
         # 글로벌 상태에서 모드 가져오기 (Scheduler가 결정한 모드 전환)
-        # current_nestedfp_enabled = self.is_nestedfp_enabled
-        # current_fp8_mode = NestedFPGlobalState.get_fp8_mode()
+        current_nestedfp_enabled = self.is_nestedfp_enabled
+        current_fp8_mode = NestedFPGlobalState.get_fp8_mode()
         
         
         # 내부 변수를 이용하기 (Static하게 측정하기 위한 용도)
-        current_nestedfp_enabled = self.is_nestedfp_enabled
-        current_fp8_mode = self.fp8
+        # current_nestedfp_enabled = self.is_nestedfp_enabled
+        # current_fp8_mode = self.fp8
 
 
         

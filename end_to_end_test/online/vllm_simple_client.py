@@ -922,8 +922,10 @@ async def run_throughput_sweep(
     # 기본 조합 설정
     if input_output_combinations is None:
         input_output_combinations = [
-            (128, 32), (256, 32), (512, 32), (1024, 32),
-            (128, 512), (256, 512), (512, 512), (1024, 512)
+            (32, 512),
+            (1024, 512),
+            (32, 32),
+            (1024, 32)
         ]
     
     print(f"\n{'='*80}")
@@ -1173,7 +1175,7 @@ async def main():
             else:
                 # 기본값: 8개의 조합
                 combinations = [
-                    (32, 32), (32, 512)
+                    (32, 32), (32, 512), (1024, 32), (1024, 512)
                 ]
             
             # Parse batch sizes

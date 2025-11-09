@@ -45,7 +45,6 @@ dependencies:
       - colorama==0.4.6
       - compressed-tensors==0.9.4
       - cupy-cuda12x==13.4.1
-      - cutlass==0.0.0
       - dataproperty==1.1.0
       - datasets==3.6.0
       - deprecated==1.2.18
@@ -205,7 +204,6 @@ dependencies:
       - urllib3==2.4.0
       - uvicorn==0.34.2
       - uvloop==0.21.0
-      - vllm==0.8.5.dev425+gf192ca90e.precompiled
       - watchfiles==1.0.5
       - websockets==15.0.1
       - word2number==1.1

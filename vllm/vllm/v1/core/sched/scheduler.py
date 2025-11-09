@@ -444,9 +444,9 @@ class Scheduler(SchedulerInterface):
         
         
         #### Dynamic Switching between FP8 <-> FP16 based on load condition.
-        # token_budget_half = self.max_num_scheduled_tokens // 2
-        # use_fp8_mode = total_num_scheduled_tokens > token_budget_half
-        # NestedFPGlobalState.set_modes(use_nestedfp = True, use_fp8 = use_fp8_mode)
+        #token_budget_half = self.max_num_scheduled_tokens // 2
+        #use_fp8_mode = total_num_scheduled_tokens > token_budget_half
+        #NestedFPGlobalState.set_modes(use_nestedfp = True, use_fp8 = use_fp8_mode)
 
 
         ### For Accuracy Evaluation. Always activate use_nestedfp and use_fp8_mode
@@ -456,17 +456,19 @@ class Scheduler(SchedulerInterface):
         current_nestedfp_enabled = NestedFPGlobalState.get_nestedfp_mode()
         current_fp8_mode = NestedFPGlobalState.get_fp8_mode()
 
-        # logger.info(
-        #     f"Scheduling step: {len(self.running)} running, "
-        #     f"{len(self.waiting)} waiting, "
-        #     f"{len(scheduled_new_reqs)} new, "
-        #     f"{len(scheduled_resumed_reqs)} resumed, "
-        #     f"{len(scheduled_running_reqs)} running scheduled, "
-        #     f"total scheduled tokens: {total_num_scheduled_tokens}, "
-        #     f"token budget: {token_budget}, "
-        #     f"encoder budget: {encoder_budget}, "
-        #     f"nestedfp enabled: {current_nestedfp_enabled}, fp8 mode: {current_fp8_mode}"
-        # )
+        #print(current_fp8_mode)
+
+        logger.info(
+            f"Scheduling step: {len(self.running)} running, "
+            f"{len(self.waiting)} waiting, "
+            f"{len(scheduled_new_reqs)} new, "
+            f"{len(scheduled_resumed_reqs)} resumed, "
+            f"{len(scheduled_running_reqs)} running scheduled, "
+            f"total scheduled tokens: {total_num_scheduled_tokens}, "
+            f"token budget: {token_budget}, "
+            f"encoder budget: {encoder_budget}, "
+            f"nestedfp enabled: {current_nestedfp_enabled}, fp8 mode: {current_fp8_mode}"
+        )
         
         
         

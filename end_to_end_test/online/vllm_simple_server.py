@@ -32,7 +32,7 @@ parser.add_argument("--max-model-len", type=int,
                     default=16384,
                     help="Maximum model length (default: 16384)")
 parser.add_argument("--max-num-batched-tokens", type=int,
-                    default=16384,
+                    default=8192,
                     help="Maximum number of batched tokens (default: 2048)")
 
 parser.add_argument("--enforce-eager", action="store_true",
