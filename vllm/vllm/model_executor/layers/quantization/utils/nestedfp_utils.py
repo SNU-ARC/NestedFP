@@ -10,7 +10,7 @@ nestedfp_lib = torch.library.Library("nestedfp", "DEF")
 class NestedFPGlobalState:
     """Global state manager for NestedFP quantization mode switching"""
     _use_nestedfp = False
-    _use_fp8 = False
+    _use_fp8 = True
     
     @classmethod
     def set_nestedfp_mode(cls, enable: bool):

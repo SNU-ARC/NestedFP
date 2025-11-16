@@ -1,1 +1,0 @@
-python vllm_simple_client.py --model /home/ubuntu/models/phi-4 --api-url http://0.0.0.0:8002/v1/completions --test-mode throughput

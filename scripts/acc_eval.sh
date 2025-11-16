@@ -5,8 +5,8 @@
 GPUS="${1:-0}"
 MODEL=${2:-Mistral-Small-24B-Base-2501}
 TASK=${3:-bbh_zeroshot}
-RUN_IDX="${4:-1}"
-FLAG="${5:-}"   # optional --nestedfp
+FLAG="${4:-}"   # optional --nestedfp
+RUN_IDX="${5:-1}"
 
 OLD_IFS="$IFS"
 IFS=',' read -ra GPU_ARRAY <<< "$GPUS"

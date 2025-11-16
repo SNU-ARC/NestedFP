@@ -1,1 +1,0 @@
-CUDA_VISIBLE_DEVICES=4 python vllm_simple_server.py --model /home/ubuntu/models/Llama-3.1-8B --port 8004 --quantization nestedfp

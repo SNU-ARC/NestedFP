@@ -2,9 +2,7 @@
 
 ## Overview
 
-**NestedFP** is a high-performance, memory-efficient dual-precision framework for LLM serving that enables both FP8 and FP16 inference from a single 16-bit model without additional memory overhead. It introduces a lightweight FP16→(FP8 + residual) decomposition and a custom CUTLASS-based kernel integrated into vLLM, achieving up to 1.55× throughput improvement in FP8 mode with accuracy comparable to standard quantized FP8 models. It also retains full FP16 precision capability for dynamic, SLO-aware serving.
-
-> ⚠️ **Note:** NestedFP now supports **vLLM 0.8.5**, but this README still describes the installation process for **vLLM 0.8.3**. The setup guide for vLLM 0.8.5 and the instructions for running the updated end-to-end evaluation process will be added soon. The Python package list is provided in **`nestedfp.yml`**. You can adjust the directory paths inside the YAML file and remove the **`vllm`** and **`cutlass`** packages before creating the environment, as both require manual reinstallation.
+**NestedFP** is a high-performance, memory-efficient dual-precision framework for LLM serving that supports both FP8 and FP16 inference from a single FP16 model without additional memory overhead. It introduces a lightweight FP16 → (FP8 + residual) decomposition and CUTLASS-based custom kernels integrated into vLLM, delivering FP8 accuracy on par with standard quantized FP8 models while preserving full FP16 precision. NestedFP further enables dynamic, SLO-aware serving by allowing runtime precision selection.
 
 ## Requirements
 
@@ -18,10 +16,9 @@ git clone https://github.com/SNU-ARC/NestedFP.git
 cd NestedFP
 
 # 2. Create environment
-conda create -n nestedfp python=3.11 -y
-conda activate nestedfp
+conda env create -f nestedfp.yml
 
-# 3. Install vLLM 0.8.3 precompiled version
+# 3. Install vLLM 0.8.5 precompiled version
 #    Clone vLLM into a temporary folder, then copy only the .git directory
 mkdir -p tmp && cd tmp
 git clone https://github.com/vllm-project/vllm.git
@@ -35,110 +32,195 @@ git add .
 git commit -m "nestedfp"
 git branch install
 git checkout install
-git reset --hard 70fedd0f7954079ebee36a7ca834cdf2f3e5d568
+git reset --hard f192ca90e6e8ab7b1b0015040e521c5374f5c812
 
-# Install with precompiled CUDA 12.4 wheel (for Ubuntu 22.04)
+# Install the precompiled vLLM binary
 VLLM_USE_PRECOMPILED=1 pip install --editable .
 
-# Return to main branch
+# Return to the main branch with NestedFP changes
 git checkout main
 
 # 4. Install NestedFP kernels
 cd ../nestedfp
 ./run.sh
-
-# 5. Install lm-eval library
-pip install lm-eval==0.4.8
 ```
 
 ## Repository Layout
-
 ```
 NestedFP/
-├── vllm/ # vLLM source with NestedFP modifications
-├── cutlass/ # CUTLASS source with custom kernels
-├── nestedfp/ # Python–C++ interface and build scripts for custom CUTLASS kernels
+├── vllm/                      # vLLM source with NestedFP modifications
+├── cutlass/                   # CUTLASS source with custom kernels
+├── nestedfp/                  # Python–C++ interface and build scripts for custom CUTLASS kernels
 └── scripts/
-├── acc_eval.sh # accuracy evaluation script
-├── e2e_bench.py # end-to-end latency evaluation
-└── kernel/
-├── run_fp16_single.sh # FP16 kernel search (single GPU)
-├── run_fp16_multi.sh # FP16 kernel search (multi GPU)
-├── run_fp8_single.sh # FP8 kernel search (single GPU)
-└── run_fp8_multi.sh # FP8 kernel search (multi GPU)
+    ├── acc_eval.sh            # accuracy evaluation script
+    ├── vllm_simple_server.py  # vLLM server launcher for streaming requests
+    ├── vllm_simple_client.py  # vLLM client for sending requests
+    └── kernel/
+        ├── run_fp16_single.sh # FP16 kernel search (single GPU)
+        ├── run_fp16_multi.sh  # FP16 kernel search (multi GPU)
+        ├── run_fp8_single.sh  # FP8 kernel search (single GPU)
+        └── run_fp8_multi.sh   # FP8 kernel search (multi GPU)
 ```
 
-## NestedFP Modes
+## Precision Mode Configuration
 
-NestedFP supports two precision modes: **NestedFP16** and **NestedFP8**. You can switch between them by editing the following line in `NestedFP/vllm/vllm/model_executor/layers/quantization/dualfp.py` (line 91).  
+NestedFP requires explicitly selecting the precision mode before each type of experiment by modifying `NestedFP/vllm/vllm/v1/core/sched/scheduler.py`:
 
-```python
-self.fp8 = True  # Set to False for NestedFP16 mode
-```
+| Mode | Line 445 (FP8) | Line 448 (FP16) | Lines 451-453 |
+|------|----------------|-----------------|---------------|
+| **FP8** | ✅ Uncomment | ❌ Comment | ❌ Comment |
+| **FP16** | ❌ Comment | ✅ Uncomment | ❌ Comment |
 
-Current version of NestedFP8 applies per-token activation quantization.
+> **Note:** Only one precision mode can be active at a time.
 
 ## Accuracy Evaluation
 
-You can evaluate model accuracy using the following command:
+### Running Accuracy Evaluation
 
+For accuracy evaluation, configure the precision mode to **FP8** (see [Precision Mode Configuration](#precision-mode-configuration)).
+
+**Command Format:**
 ```bash
 ./scripts/acc_eval.sh <GPU_ID> <MODEL_PATH>
 ```
 
-- `<gpu_id>`: The GPU index to use
-- `<model_path>`: Path to the model directory  
+**Parameters:**
+- `<GPU_ID>` — GPU index to use for evaluation
+- `<MODEL_PATH>` — Path to the model directory
 
-**Example:**
+### Example
 ```bash
 ./scripts/acc_eval.sh 0 Mistral-Small-24B-Base-2501
 ```
 
-**Output:**
-All results will be saved to: `./results/acc_eval/`
+This command evaluates the model accuracy using:
+- GPU 0
+- Model: `Mistral-Small-24B-Base-2501`
+
+### Output
+
+All evaluation results will be saved to: `./results/acc_eval/`
 
 ## Kernel Search
 
-You can search for the optimal CUTLASS kernel using the following command. The script sweeps over 80 candidate kernels to find the best-performing one for a specific GEMM shape. You can check the GEMM shapes used in our customized vLLM version at: `NestedFP/vllm/vllm/model_executor/layers/quantization/utils/dualfp_utils.py`
+### Overview
 
-**Command format:**
+The kernel search script benchmarks 80 candidate CUTLASS kernels for each target GEMM configuration (including batch size) on NVIDIA H100 GPUs and reports their performance for manual kernel selection.
+
+**Optimal kernels for each GEMM shape:**  
+You can find the reference mapping from GEMM shapes to their optimal CUTLASS kernels in our customized vLLM at: `NestedFP/vllm/vllm/model_executor/layers/quantization/utils/nestedfp_utils.py`
+
+### Running Kernel Search
+
+For kernel search, configure the precision mode to **FP16** (see [Precision Mode Configuration](#precision-mode-configuration)).
+
+**Command Format:**
 ```bash
-./scripts/kernel/run_fp16_single.sh N K GPU M_START M_END  
-./scripts/kernel/run_fp8_single.sh N K GPU M_START M_END  
+./scripts/kernel/run_fp16_single.sh N K GPU M_START M_END
 ```
 
-- `GPU` — GPU index to use
-- `M_START` — starting M dimension for the search range
-- `M_END` — ending M dimension for the search range
+**Parameters:**
+- `N` — N dimension of the GEMM shape
+- `K` — K dimension of the GEMM shape
+- `GPU` — GPU index to use for the search
+- `M_START` — Starting M dimension for the search range
+- `M_END` — Ending M dimension for the search range
 
-**Example (FP16):**
+### Example
+
+**FP16 Kernel Search:**
 ```bash
 ./scripts/kernel/run_fp16_single.sh 5120 32768 0 32 2048
 ```
 
-**Example (FP8):**
+This command searches for the optimal kernel with:
+- N = 5120, K = 32768
+- GPU 0
+- M dimension range: 32 to 2048 (in steps of 32)
+
+## Throughput Test
+
+### Running the Test
+
+For throughput test, configure the precision mode to **FP16** (see [Precision Mode Configuration](#precision-mode-configuration)).
+
+#### 1. Start the Model Server
+
+First, load your model using the following command:
 ```bash
-./scripts/kernel/run_fp8_single.sh 5120 32768 0 32 2048
+python scripts/vllm_simple_server.py \
+  --model <MODEL_PATH> \
+  --max-num-batched-tokens 8192 \
+  --port 8000
 ```
 
-## End-to-End Benchmark
+**Parameters:**
+- `<MODEL_PATH>` — Path to the model directory
+- `--quantization nestedfp` — Enables NestedFP mode (omit this flag for baseline FP16 mode)
 
-You can run the end-to-end benchmark using the following command:
-```bash
-python scripts/e2e_bench.py --nestedfp --model <MODEL_PATH>
+When the model loads successfully, you'll see:
+```
+INFO:     Started server process [200291]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
-- `<MODEL_PATH>` — path to the model directory
-- `--nestedfp` — enables NestedFP mode; remove this flag to run in baseline FP16 mode
+#### 2. Run the Throughput Test
 
-**Example:**
+In a separate terminal, execute:
 ```bash
-python scripts/e2e_bench.py --nestedfp --model Mistral-Small-24B-Base-2501
+python scripts/vllm_simple_client.py \
+  --model <MODEL_PATH> \
+  --api-url http://0.0.0.0:8000/v1/completions \
+  --test-mode throughput
 ```
 
-**Output:**
+### Examples
 
-All benchmark logs and results will be saved to: `./scripts/results/e2e/`
+**Vanilla FP16 Execution:**
+```bash
+# Start server
+python scripts/vllm_simple_server.py \
+  --model Mistral-Small-24B-Base-2501 \
+  --max-num-batched-tokens 8192 \
+  --port 8000
+
+# Run client
+python scripts/vllm_simple_client.py \
+  --model Mistral-Small-24B-Base-2501 \
+  --api-url http://0.0.0.0:8000/v1/completions \
+  --test-mode throughput
+```
+
+**NestedFP FP16 Execution:**
+```bash
+# Start server with NestedFP
+python scripts/vllm_simple_server.py \
+  --model Mistral-Small-24B-Base-2501 \
+  --max-num-batched-tokens 8192 \
+  --port 8000 \
+  --quantization nestedfp
+
+# Run client with NestedFP
+python scripts/vllm_simple_client.py \
+  --model Mistral-Small-24B-Base-2501 \
+  --api-url http://0.0.0.0:8000/v1/completions \
+  --test-mode throughput \
+  --nestedfp
+```
+
+### Additional Options
+
+You can customize the test parameters by passing additional options to `vllm_simple_client.py`:
+- Input/output token length
+- Batch size
+
+See the script's help documentation for all available options.
+
+### Notes
+
+For stable performance measurements, we recommend running each test at least twice.
 
 ## Citation
 
