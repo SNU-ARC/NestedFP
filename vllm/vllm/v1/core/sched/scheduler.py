@@ -441,12 +441,6 @@ class Scheduler(SchedulerInterface):
         assert (len(scheduled_new_reqs) + len(scheduled_resumed_reqs) +
                 len(scheduled_running_reqs) <= len(self.running))
 
-        ### For Accuracy Evaluation. Always activate NestedFP FP8 mode.
-        NestedFPGlobalState.set_modes(use_nestedfp = True, use_fp8 = True)
-        
-        ### For Throughput Evaluation. Always activate NestedFP FP16 mode.
-        #NestedFPGlobalState.set_modes(use_nestedfp = True, use_fp8 = False)
-
         #### Dynamic Switching between FP8 <-> FP16 based on load condition.
         #token_budget_half = self.max_num_scheduled_tokens // 2
         #use_fp8_mode = total_num_scheduled_tokens > token_budget_half

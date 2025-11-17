@@ -263,8 +263,10 @@ class LinearBase(torch.nn.Module):
         TH = 1.8192
 
         exceeds_threshold = (param_data.abs() > TH).any().item()
+        NestedFPGlobalState.increase_total_count()
 
         if not exceeds_threshold:
+            NestedFPGlobalState.increase_load_count()
             upper_part = torch.empty_like(param_data, dtype=torch.float8_e4m3fn)
             lower_part = torch.empty_like(param_data, dtype=torch.float8_e4m3fn)
             cutlass.divide_fp16(param_data, upper_part, lower_part)
@@ -273,14 +275,12 @@ class LinearBase(torch.nn.Module):
             # Store the split weights as attributes of the parameter
             setattr(param, "upper_part", upper_part)
             setattr(param, "lower_part", lower_part)
-            print("Weight successfully split into upper and lower parts.")
+            print(f"Weight successfully split into upper and lower parts. Divide Count : {NestedFPGlobalState.get_load_count()} / {NestedFPGlobalState.get_total_count()}")
             self.quant_method.is_nestedfp_enabled = True
         else:
             print("Weight exceeds threshold, not splitting.")
-            # setattr(param, "full_weight", param_data)
-            del param_data
             self.quant_method.is_nestedfp_enabled = False
-            
+
     def increase_load_count_check_divide_fp16(self, param: Parameter, param_data: torch.Tensor):
         from vllm.model_executor.layers.quantization.nestedfp import NestedFPLinearMethod
         """Increase the load count and check if we need to divide fp16."""

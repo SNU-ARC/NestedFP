@@ -87,8 +87,12 @@ class NestedFPLinearMethod(LinearMethodBase):
     def __init__(self, quant_config: NestedFPConfig):
         self.quant_config = quant_config
         self.weight = None
-        self.is_nestedfp_enabled = True # Weight가 NestedFP 조건을 만족하지 못하는 경우, False로 설정됨
-        self.fp8 = False # True : FP8 측정 모드 for ACC Eval, False : FP16 측정 모드 for Throughput Eval
+        self.is_nestedfp_enabled = True # Set to False if weight condition is not satisfied
+        NestedFPGlobalState.set_nestedfp_mode(True)
+        # Set NestedFP FP8 mode (For accuracy evaluation)
+        #NestedFPGlobalState.set_fp8_mode(True)
+        # Set NestedFP FP16 mode (For throughput evaluation)
+        NestedFPGlobalState.set_fp8_mode(False)
 
     def create_weights(self, layer: torch.nn.Module,
                        input_size_per_partition: int,
@@ -115,14 +119,7 @@ class NestedFPLinearMethod(LinearMethodBase):
         # 글로벌 상태에서 모드 가져오기 (Scheduler가 결정한 모드 전환)
         current_nestedfp_enabled = self.is_nestedfp_enabled
         current_fp8_mode = NestedFPGlobalState.get_fp8_mode()
-        
-        
-        # 내부 변수를 이용하기 (Static하게 측정하기 위한 용도)
-        # current_nestedfp_enabled = self.is_nestedfp_enabled
-        # current_fp8_mode = self.fp8
-
-
-        
+    
         def fp16_to_fp8(x, dtype=torch.float8_e4m3fn):
             finfo = torch.finfo(torch.float8_e4m3fn)
             

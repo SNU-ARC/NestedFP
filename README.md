@@ -6,43 +6,21 @@
 
 ## Requirements
 
-* **Ubuntu 22.04**
-* **CUDA 12.6**
+- **Ubuntu 22.04**
+- **GCC/G++ 12.3.0**
+- **CUDA 12.6**
+
+### Optional
+```bash
+sudo apt install ninja-build  # For faster compilation
+```
 
 ## Setup
+
+Run the following command to install NestedFP and its dependencies:
+
 ```bash
-# 1. Clone NestedFP repository
-git clone https://github.com/SNU-ARC/NestedFP.git
-cd NestedFP
-
-# 2. Create environment
-conda env create -f nestedfp.yml
-
-# 3. Install vLLM 0.8.5 precompiled version
-#    Clone vLLM into a temporary folder, then copy only the .git directory
-mkdir -p tmp && cd tmp
-git clone https://github.com/vllm-project/vllm.git
-cd ..
-
-cp -r tmp/vllm/.git vllm/
-rm -rf tmp
-
-cd vllm
-git add .
-git commit -m "nestedfp"
-git branch install
-git checkout install
-git reset --hard f192ca90e6e8ab7b1b0015040e521c5374f5c812
-
-# Install the precompiled vLLM binary
-VLLM_USE_PRECOMPILED=1 pip install --editable .
-
-# Return to the main branch with NestedFP changes
-git checkout main
-
-# 4. Install NestedFP kernels
-cd ../nestedfp
-./run.sh
+./install.sh
 ```
 
 ## Repository Layout
@@ -51,25 +29,29 @@ NestedFP/
 ├── vllm/                      # vLLM source with NestedFP modifications
 ├── cutlass/                   # CUTLASS source with custom kernels
 ├── nestedfp/                  # Python–C++ interface and build scripts for custom CUTLASS kernels
-└── scripts/
-    ├── acc_eval.sh            # accuracy evaluation script
-    ├── vllm_simple_server.py  # vLLM server launcher for streaming requests
-    ├── vllm_simple_client.py  # vLLM client for sending requests
-    └── kernel/
-        ├── run_fp16_single.sh # FP16 kernel search (single GPU)
-        ├── run_fp16_multi.sh  # FP16 kernel search (multi GPU)
-        ├── run_fp8_single.sh  # FP8 kernel search (single GPU)
-        └── run_fp8_multi.sh   # FP8 kernel search (multi GPU)
+├── scripts/
+│   ├── acc_eval.sh            # accuracy evaluation script
+│   ├── vllm_simple_server.py  # vLLM server launcher for streaming requests
+│   ├── vllm_simple_client.py  # vLLM client for sending requests
+│   └── kernel/
+│       ├── run_fp16_single.sh # FP16 kernel search (single GPU)
+│       ├── run_fp16_multi.sh  # FP16 kernel search (multi GPU)
+│       ├── run_fp8_single.sh  # FP8 kernel search (single GPU)
+│       └── run_fp8_multi.sh   # FP8 kernel search (multi GPU)
+└── example/                   # example usage scripts
 ```
 
 ## Precision Mode Configuration
 
-NestedFP requires explicitly selecting the precision mode before each type of experiment by modifying `NestedFP/vllm/vllm/v1/core/sched/scheduler.py`:
+NestedFP requires explicitly selecting the precision mode before each experiment by modifying two files:
+- `NestedFP/vllm/vllm/model_executor/layers/quantization/nestedfp.py`
+- `NestedFP/vllm/vllm/v1/core/sched/scheduler.py`
 
-| Mode | Line 445 (FP8) | Line 448 (FP16) | Lines 451-453 |
-|------|----------------|-----------------|---------------|
+| Mode | nestedfp.py<br>Line 93 | nestedfp.py<br>Line 95 | scheduler.py<br>Lines 445-447 |
+|------|:---:|:---:|:---:|
 | **FP8** | ✅ Uncomment | ❌ Comment | ❌ Comment |
 | **FP16** | ❌ Comment | ✅ Uncomment | ❌ Comment |
+| **Dynamic Precision Selection** | ❌ Comment | ❌ Comment | ✅ Uncomment |
 
 > **Note:** Only one precision mode can be active at a time.
 

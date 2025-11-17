@@ -10,7 +10,9 @@ nestedfp_lib = torch.library.Library("nestedfp", "DEF")
 class NestedFPGlobalState:
     """Global state manager for NestedFP quantization mode switching"""
     _use_nestedfp = False
-    _use_fp8 = True
+    _use_fp8 = False
+    _load_count = 0
+    _total_count = 0
     
     @classmethod
     def set_nestedfp_mode(cls, enable: bool):
@@ -43,6 +45,21 @@ class NestedFPGlobalState:
         """Get both modes as tuple (use_nestedfp, use_fp8)"""
         return cls._use_nestedfp, cls._use_fp8
 
+    @classmethod
+    def increase_load_count(cls):
+        cls._load_count = cls._load_count + 1
+    
+    @classmethod
+    def get_load_count(cls):
+        return cls._load_count
+
+    @classmethod
+    def increase_total_count(cls):
+        cls._total_count = cls._total_count + 1
+    
+    @classmethod
+    def get_total_count(cls):
+        return cls._total_count
 
 @torch.library.custom_op("nestedfp::fp16_baseline", mutates_args=({}))
 def fp16_baseline(
