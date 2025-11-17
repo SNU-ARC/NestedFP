@@ -63,7 +63,7 @@ For accuracy evaluation, configure the precision mode to **FP8** (see [Precision
 
 **Command Format:**
 ```bash
-./scripts/acc_eval.sh <GPU_ID> <MODEL_PATH>
+./scripts/acc_eval.sh <GPU_ID> <MODEL_PATH> --nestedfp
 ```
 
 **Parameters:**
@@ -72,12 +72,8 @@ For accuracy evaluation, configure the precision mode to **FP8** (see [Precision
 
 ### Example
 ```bash
-./scripts/acc_eval.sh 0 Mistral-Small-24B-Base-2501
+./scripts/acc_eval.sh 0 Mistral-Small-24B-Base-2501 --nestedfp
 ```
-
-This command evaluates the model accuracy using:
-- GPU 0
-- Model: `Mistral-Small-24B-Base-2501`
 
 ### Output
 
@@ -213,6 +209,6 @@ Please cite our paper if you find our work useful:
   title={NestedFP: High-Performance, Memory-Efficient Dual-Precision Floating Point Support for LLMs},
   author={Haeun Lee and Omin Kwon and Yeonhong Park and Jae W. Lee},
   year={2025},
-  booktitle={Proceedings of the 39th Conference on Neural Information Processing Systems}
+  booktitle={The Thirty-ninth Annual Conference on Neural Information Processing Systems}
 }
 ```
