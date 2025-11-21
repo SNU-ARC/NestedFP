@@ -52,7 +52,7 @@ iter_num_decode_graph = {}  # {iteration_total: [num_decode]}
 
 # Global variable for iteration details
 iteration_details = {}  # {iteration_total: {...}}
-iteration_lock = asyncio.Lock()  # async 환경에서 안전한 접근을 위한 락
+iteration_lock = asyncio.Lock()  # Lock for safe execution in async environment
 
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
@@ -85,7 +85,7 @@ async def async_request_openai_completions(
         generated_text = ""
         st = time.perf_counter()
         output.request_sent_time = st
-        previous_timestamp = None  # 🆕 ITL 계산을 위한 이전 timestamp 추적
+        previous_timestamp = None  # Track previous timestamp for ITL calculation
         
         try:
             async with session.post(url=api_url, json=payload, headers=headers) as response:
@@ -118,7 +118,6 @@ async def async_request_openai_completions(
                                 decode_tokens = choices[0].get("decode_tokens")
                                 request_details = choices[0].get("request_details", [])
                                 
-                                # iteration 정보 저장 (기존 - RequestFuncOutput용)
                                 if timestamp is not None and iteration_total is not None:
                                     output.iteration_data.append({
                                         "iteration_total": iteration_total,
@@ -127,7 +126,6 @@ async def async_request_openai_completions(
                                         "text": text or ""
                                     })
                                 
-                                # 🆕 단순화된 iteration별 상세 정보 수집
                                 if iteration_total is not None:
                                     async with iteration_lock:
                                         if iteration_total not in iteration_details:
@@ -145,15 +143,14 @@ async def async_request_openai_completions(
                                                 "prefill_tokens": prefill_tokens,
                                                 "decode_tokens": decode_tokens,
                                                 "request_details": request_details,
-                                                "itl": None,  # 🆕 단일 ITL 값
+                                                "itl": None,
                                             }
                                         
-                                        # 기존 iteration이면 최신 정보로 업데이트
                                         iter_data = iteration_details[iteration_total]
                                         iter_data["timestamp"] = timestamp
                                         iter_data["tokens_generated"] += 1
                                         
-                                        # 🆕 ITL 계산 (이전 토큰과의 시간차)
+                                        # Calculate ITL
                                         if previous_timestamp is not None:
                                             itl = timestamp - previous_timestamp
                                             iter_data["itl"] = itl
@@ -162,14 +159,13 @@ async def async_request_openai_completions(
                                 
                                 if not first_chunk_received:
                                     first_chunk_received = True
-                                    ttft = time.perf_counter() - st  # ✅ 클라이언트 기준
+                                    ttft = time.perf_counter() - st
                                     output.ttft = ttft
                                     ttft_graph['iteration_step'].append(iteration_total)
                                     ttft_graph['ttft'].append(ttft)
                                 else:
                                     output.itl.append(timestamp - previous_timestamp if previous_timestamp else 0)
                                     
-                                # 🔄 기존 그래프 데이터 수집 (호환성 유지)
                                 if iteration_total is not None and previous_timestamp is not None:
                                     token_latency = timestamp - previous_timestamp
                                     if iteration_total not in iter_tpot_graph:
@@ -182,7 +178,7 @@ async def async_request_openai_completions(
                                 iter_num_prefill_graph[iteration_total] = [num_prefill]
                                 iter_num_decode_graph[iteration_total] = [num_decode]
 
-                                # 🆕 이전 timestamp 업데이트
+                                # Update previous timestamp
                                 if timestamp is not None:
                                     previous_timestamp = timestamp
                                     
@@ -202,6 +198,7 @@ async def async_request_openai_completions(
                 else:
                     output.error = response.reason or ""
                     output.success = False
+        
         except Exception:
             output.success = False
             exc_info = sys.exc_info()
@@ -209,47 +206,7 @@ async def async_request_openai_completions(
 
         return output
 
-
-# 🆕 iteration 상세 정보 후처리 함수
-def process_iteration_details():
-    """수집된 iteration 정보를 후처리하여 최종 형태로 변환"""
-    processed_iterations = []
-    
-    for iteration_total in sorted(iteration_details.keys()):
-        iter_data = iteration_details[iteration_total]
-        
-        # 🆕 단순화된 구조
-        processed_iter = {
-            "iteration_total": iteration_total,
-            "timestamp": iter_data["timestamp"],  # 🆕 단일 timestamp
-            "tokens_generated": iter_data["tokens_generated"],
-            
-            # 스케줄링 정보
-            "total_scheduled_requests": iter_data["total_scheduled_requests"],
-            "total_scheduled_tokens": iter_data["total_scheduled_tokens"],
-            "prefill_requests": iter_data["prefill_requests"], 
-            "decode_requests": iter_data["decode_requests"],
-            "prefill_tokens": iter_data["prefill_tokens"],
-            "decode_tokens": iter_data["decode_tokens"],
-            
-            # KV cache 정보
-            "kv_cache_usage": iter_data["kv_cache_usage"],
-            "kv_cache_usage_gb": iter_data["kv_cache_usage_gb"],
-            "kv_cache_total_capacity": iter_data["kv_cache_total_capacity"],
-            # 🆕 ITL (Inter-Token Latency) - 단일 값
-            "itl": iter_data["itl"],
-            # 요청별 세부 정보
-            "request_details": iter_data["request_details"]
-        }
-        
-        processed_iterations.append(processed_iter)
-    
-    return processed_iterations
-
-
-# 기존 함수들은 그대로 유지...
 def pregenerate_prompts(trace_df, tokenizer_name="Qwen/Qwen2.5-7B"):
-    """효율적으로 정확한 토큰 길이의 프롬프트 생성"""
     print(f"Pre-generating prompts using tokenizer: {tokenizer_name}")
     start_time = time.time()
 
@@ -257,7 +214,6 @@ def pregenerate_prompts(trace_df, tokenizer_name="Qwen/Qwen2.5-7B"):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
    
-    # 간단한 단어 풀
     words = ["hello", "world", "test", "data", "model", "training", "computer", "science",
             "artificial", "intelligence", "machine", "learning", "neural", "network",
             "transformer", "attention", "embedding", "layer", "parameter", "gradient",
@@ -265,26 +221,20 @@ def pregenerate_prompts(trace_df, tokenizer_name="Qwen/Qwen2.5-7B"):
             "memory", "storage", "database", "server", "client", "protocol", "interface"]
    
     prompts = []
-    
     for idx, row in trace_df.iterrows():
         target_tokens = row['CONTEXT_TOKENS']
-        
-        # request별 다른 시드 사용 (KV Cache 다양성 확보)
+
         random.seed(idx)
         
-        # 충분히 긴 프롬프트 생성 (target_tokens의 1.5배 정도)
         selected_words = random.choices(words, k=target_tokens * 2)
         prompt = " ".join(selected_words)
         
-        # 토큰 길이 확인 및 조정
         encoded = tokenizer.encode(prompt, add_special_tokens=False)
         
         if len(encoded) > target_tokens:
-            # 토큰 단위로 정확히 자르기
             truncated_tokens = encoded[:target_tokens]
             prompt = tokenizer.decode(truncated_tokens)
         elif len(encoded) < target_tokens:
-            # 부족한 경우 단어 더 추가
             while len(encoded) < target_tokens:
                 additional_word = random.choice(words)
                 test_prompt = prompt + " " + additional_word
@@ -295,64 +245,44 @@ def pregenerate_prompts(trace_df, tokenizer_name="Qwen/Qwen2.5-7B"):
                 else:
                     break
         
+        assert len(tokenizer.encode(prompt, add_special_tokens=False)) == target_tokens
         prompts.append(prompt)
         
         if (idx + 1) % 100 == 0:
             print(f"Generated {idx + 1}/{len(trace_df)} prompts")
     
-    # 검증
-    print("\nValidating generated prompts...")
-    mismatches = 0
-    for i, (prompt, target_length) in enumerate(zip(prompts, trace_df['CONTEXT_TOKENS'])):
-        actual_length = len(tokenizer.encode(prompt, add_special_tokens=False))
-        if actual_length != target_length:
-            mismatches += 1
-            if mismatches <= 5:
-                print(f"Mismatch at index {i}: target={target_length}, actual={actual_length}")
-    
     generation_time = time.time() - start_time
     print(f"Prompt generation completed in {generation_time:.2f}s")
-    print(f"Token length mismatches: {mismatches}/{len(prompts)}")
-    
     return prompts
 
 def load_trace_data(file_path, num_requests=None, duration_minutes=None):
-    """
-    Trace 데이터를 로드하고 필터링
-    
-    Args:
-        file_path: CSV 파일 경로
-        num_requests: 사용할 요청 개수 (legacy, duration_minutes와 함께 사용 불가)
-        duration_minutes: 실험 지속 시간 (분 단위)
-    """
     df = pd.read_csv(file_path)
     df['TIMESTAMP'] = pd.to_datetime(df.iloc[:, 0])
     df.columns = ['TIMESTAMP', 'CONTEXT_TOKENS', 'GENERATED_TOKENS']
     
-    # 상대 시간 계산
+    # Calculate relative time
     first_timestamp = df['TIMESTAMP'].min()
     df['relative_time'] = (df['TIMESTAMP'] - first_timestamp).dt.total_seconds()
     
-    # trace 데이터의 총 지속 시간 계산
+    # Duration of trace data
     total_duration_seconds = df['relative_time'].max()
     total_duration_minutes = total_duration_seconds / 60
     
     print(f"Trace file loaded: {len(df)} total requests")
     print(f"Trace duration: {total_duration_minutes:.2f} minutes ({total_duration_seconds:.2f} seconds)")
     
-    # 두 파라미터가 모두 제공된 경우 에러
+    # Error if both parameters are provided
     if num_requests is not None and duration_minutes is not None:
         raise ValueError("Cannot specify both num_requests and duration_minutes. Please use only one.")
     
-    # duration_minutes 기준으로 필터링
+    # Filter based on duration_minutes
     if duration_minutes is not None:
         target_duration_seconds = duration_minutes * 60
         
-        # 요청한 시간이 trace 데이터보다 긴 경우 에러
+        # Error if requested time is longer than trace data 
         if target_duration_seconds > total_duration_seconds:
             raise ValueError(f"Requested duration ({duration_minutes} minutes) exceeds trace data duration ({total_duration_minutes:.2f} minutes)")
         
-        # 지정된 시간 내의 요청만 필터링
         filtered_df = df[df['relative_time'] <= target_duration_seconds].copy()
         
         print(f"Using {duration_minutes} minutes of trace data: {len(filtered_df)} requests")
@@ -360,7 +290,7 @@ def load_trace_data(file_path, num_requests=None, duration_minutes=None):
         
         return filtered_df
     
-    # num_requests 기준으로 필터링 (legacy 지원)
+    # Filter based on num_requests
     elif num_requests is not None:
         if len(df) > num_requests:
             df = df.head(num_requests)
@@ -371,21 +301,19 @@ def load_trace_data(file_path, num_requests=None, duration_minutes=None):
         
         return df
     
-    # 아무것도 지정되지 않은 경우 모든 데이터 사용
+    # Use all data if no option
     else:
         print(f"Using all {len(df)} requests from trace file")
         return df
 
 async def execute_single_request_with_prompt(request_input, prompt, api_url, model_name, request_id):
-    """미리 생성된 프롬프트를 사용하는 버전"""
     input_obj = RequestFuncInput(
-        prompt=prompt,  # 미리 생성된 프롬프트 사용
+        prompt=prompt,
         api_url=api_url,
         prompt_len=request_input['CONTEXT_TOKENS'],
         output_len=request_input['GENERATED_TOKENS'],
         model=model_name
     )
-    
     result = await async_request_openai_completions(input_obj)
     return result, request_id
 
@@ -398,14 +326,14 @@ async def execute_trace_based_requests(trace_df, prompts, api_url, model_name):
     for idx, row in trace_df.iterrows():
         target_time = row['relative_time']
         
-        # 정확한 시간까지 대기
+        # Wait till exact time
         while True:
             current_time = time.perf_counter() - start_time
             if current_time >= target_time:
                 break
-            await asyncio.sleep(0.001)  # 1ms 간격으로 체크
+            await asyncio.sleep(0.001)  # Check with 1 ms interval
         
-        # 요청 전송
+        # Send request
         task = asyncio.create_task(
             execute_single_request_with_prompt(row, prompts[idx], api_url, model_name, idx)
         )
@@ -442,27 +370,16 @@ async def execute_trace_based_requests(trace_df, prompts, api_url, model_name):
     return final_results
 
 async def run_experiment(trace_file, api_url, model_name, num_requests=None, duration_minutes=None, middle_ratio=0.8):
-    """
-    실험 실행
-    
-    Args:
-        trace_file: trace 파일 경로
-        api_url: API URL
-        model_name: 모델 이름
-        num_requests: 사용할 요청 개수 (legacy)
-        duration_minutes: 실험 지속 시간 (분 단위)
-        middle_ratio: 성능 분석용 중간 구간 비율
-    """
     print(f"\n--- Running trace-based experiment ---")
     
-    # 🆕 전역 변수 초기화
+    # Initialize global variables
     global iteration_details
     iteration_details.clear()
     
-    # trace 데이터 로드
+    # Load trace data
     trace_df = load_trace_data(trace_file, num_requests=num_requests, duration_minutes=duration_minutes)
     
-    # 실험 정보 출력
+    # Print experiment information
     if duration_minutes is not None:
         print(f"Experiment setup: {duration_minutes} minutes, {len(trace_df)} requests")
     elif num_requests is not None:
@@ -478,71 +395,119 @@ async def run_experiment(trace_file, api_url, model_name, num_requests=None, dur
     experiment_end_time = time.perf_counter()
     print(f"Experiment completed at {experiment_end_time:.6f}s")
     
-    # Request 별 결과 저장
-    results_file = f"benchmark_request.json"
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"Results with iteration data saved to {results_file}")
+    successful_results = [r for r in results if r['success']]
+    successful_results.sort(key=lambda x: x['request_id'])
     
+    total_count = len(results)
+    success_count = len(successful_results)
+    assert total_count == success_count
     
-    # Iteration 별 결과 저장.
-    processed_iterations = process_iteration_details()
-    iteration_file = f"benchmark_iteration.json"
-    with open(iteration_file, 'w') as f:
-        json.dump(processed_iterations, f, indent=2)
-    print(f"Iteration details saved to {iteration_file}")
+    print(f"Completed {success_count}/{total_count} requests successfully")
     
+    if not successful_results:
+        print("No successful results to plot or calculate stats")
+        return {}, success_count
     
-    # 🆕 iteration 통계 출력
-    print(f"\n--- Iteration Statistics ---")
-    print(f"Total iterations executed: {len(processed_iterations)}")
-    if processed_iterations:
-        total_tokens = sum(iter_data['tokens_generated'] for iter_data in processed_iterations)
-        avg_tokens_per_iter = total_tokens / len(processed_iterations)
-        print(f"Total tokens generated: {total_tokens}")
-        print(f"Average tokens per iteration: {avg_tokens_per_iter:.2f}")
+    # Calculate middle data
+    if middle_ratio >= 1.0 or middle_ratio <= 0:
+        print(f"Warning: Invalid middle_ratio {middle_ratio}, using all data")
+        filtered_results = successful_results
+        start_idx = 0
+        end_idx = len(successful_results)
+    else:
+        total_successful = len(successful_results)
+        skip_count = int(total_successful * (1 - middle_ratio) / 2)
+        start_idx = skip_count
+        end_idx = total_successful - skip_count
+        filtered_results = successful_results[start_idx:end_idx]
+    
+    print(f"Using middle {middle_ratio*100}% of data: requests {start_idx} to {end_idx-1} (total: {len(filtered_results)})")
+    
+    if not filtered_results:
+        print("No data remaining after filtering")
+        return {}, success_count
+    
+    # Calculate statistics
+    latency_values = [r['latency'] for r in filtered_results]
+    ttft_values = [r['ttft'] for r in filtered_results if r['ttft'] > 0]
+    tpot_values = [r['tpot'] for r in filtered_results if r['tpot'] > 0]
+    
+    stats = {}
+    stats['filtered_count'] = len(filtered_results)
+    stats['filter_range'] = f"{start_idx}-{end_idx-1}"
+    stats['avg_latency'] = np.mean(latency_values)
+    
+    if ttft_values:
+        stats['p50_ttft'] = np.percentile(ttft_values, 50)
+        stats['p90_ttft'] = np.percentile(ttft_values, 90)
+        stats['p99_ttft'] = np.percentile(ttft_values, 99)
+    
+    if tpot_values:
+        stats['p50_tpot'] = np.percentile(tpot_values, 50)
+        stats['p90_tpot'] = np.percentile(tpot_values, 90)
+        stats['p99_tpot'] = np.percentile(tpot_values, 99)
+    
+    # Print statistics
+    print(f"\n--- Performance Statistics (Middle {middle_ratio*100}% of requests) ---")
+    print(f"Filtered data range: requests {start_idx} to {end_idx-1} ({len(filtered_results)} requests)")
+    print(f"Average latency: {stats.get('avg_latency', 0):.4f}s")
+    if 'p50_ttft' in stats:
+        print(f"P50 TTFT: {stats['p50_ttft']:.4f}s")
+        print(f"P90 TTFT: {stats['p90_ttft']:.4f}s")
+        print(f"P99 TTFT: {stats['p99_ttft']:.4f}s")
+    if 'p50_tpot' in stats:
+        print(f"P50 TPOT: {stats['p50_tpot']:.4f}s")
+        print(f"P90 TPOT: {stats['p90_tpot']:.4f}s")
+        print(f"P99 TPOT: {stats['p99_tpot']:.4f}s")
+    
+    paired_data = [(r['tpot'], r['ttft']) for r in filtered_results 
+                   if r['ttft'] > 0 and r['tpot'] > 0]    
+    paired_tpot, paired_ttft = zip(*paired_data)
+    
+    # Calculate SLO attainment
+    slo_tpot = [0.116, 0.174]
+    if slo_tpot is not None and len(slo_tpot) == 2:
+        slo_tpot_tight, slo_tpot_loose = slo_tpot
+        tpot_tight_satisfied = sum(1 for tpot in paired_tpot if tpot <= slo_tpot_tight)
+        tpot_loose_satisfied = sum(1 for tpot in paired_tpot if tpot <= slo_tpot_loose)
         
-        # 스케줄링 통계
-        avg_scheduled_reqs = np.mean([iter_data.get('total_scheduled_requests', 0) for iter_data in processed_iterations if iter_data.get('total_scheduled_requests') is not None])
-        avg_scheduled_tokens = np.mean([iter_data.get('total_scheduled_tokens', 0) for iter_data in processed_iterations if iter_data.get('total_scheduled_tokens') is not None])
-        avg_prefill_reqs = np.mean([iter_data.get('prefill_requests', 0) for iter_data in processed_iterations if iter_data.get('prefill_requests') is not None])
-        avg_prefill_tokens = np.mean([iter_data.get('prefill_tokens', 0) for iter_data in processed_iterations if iter_data.get('prefill_tokens') is not None])
-        avg_decode_reqs = np.mean([iter_data.get('decode_requests', 0) for iter_data in processed_iterations if iter_data.get('decode_requests') is not None])
-        avg_decode_tokens = np.mean([iter_data.get('decode_tokens', 0) for iter_data in processed_iterations if iter_data.get('decode_tokens') is not None])
+        total_paired = len(paired_data)
+        tpot_tight_ratio = tpot_tight_satisfied / total_paired * 100
+        tpot_loose_ratio = tpot_loose_satisfied / total_paired * 100
         
-        avg_kv_usage = np.mean([iter_data.get('kv_cache_usage', 0) for iter_data in processed_iterations if iter_data.get('kv_cache_usage') is not None])
-        avg_kv_usage_gb = np.mean([iter_data.get('kv_cache_usage_gb', 0) for iter_data in processed_iterations if iter_data.get('kv_cache_usage_gb') is not None])
-        avg_kv_total_capacity = np.mean([iter_data.get('kv_cache_total_capacity', 0) for iter_data in processed_iterations if iter_data.get('kv_cache_total_capacity') is not None])
-        
-        
-        print(f"Average scheduled requests per iteration: {avg_scheduled_reqs:.2f}")
-        print(f"Average scheduled tokens per iteration: {avg_scheduled_tokens:.2f}")
-        print(f"Average prefill requests per iteration: {avg_prefill_reqs:.2f}")
-        print(f"Average prefill tokens per iteration: {avg_prefill_tokens:.2f}")
-        print(f"Average decode requests per iteration: {avg_decode_reqs:.2f}")
-        print(f"Average decode tokens per iteration: {avg_decode_tokens:.2f}")
-        
-        print(f"Average kv cache usage per iteration: {avg_kv_usage:.4f}"
-              f" (GB: {avg_kv_usage_gb:.4f}, Total Capacity: {avg_kv_total_capacity:.4f})")
+        print(f"\n--- TPOT SLO Satisfaction ---")
+        print(f"TPOT Tight SLO ({slo_tpot_tight:.3f}s) satisfied: {tpot_tight_satisfied}/{total_paired} ({tpot_tight_ratio:.1f}%)")
+        print(f"TPOT loose SLO ({slo_tpot_loose:.3f}s) satisfied: {tpot_loose_satisfied}/{total_paired} ({tpot_loose_ratio:.1f}%)")
     
-    # iteration 데이터 요약 출력 (기존)
-    total_tokens = sum(len(r['iteration_data']) for r in results if r['success'])
-    print(f"Total tokens generated: {total_tokens}")
-    print(f"Total Experiment Time: {experiment_end_time - experiment_start_time:.2f}s")
+    slo_ttft = [1.30, 1.95]
+    if slo_ttft is not None and len(slo_ttft) == 2:
+        slo_ttft_tight, slo_ttft_loose = slo_ttft
+        ttft_tight_satisfied = sum(1 for ttft in paired_ttft if ttft <= slo_ttft_tight)
+        ttft_loose_satisfied = sum(1 for ttft in paired_ttft if ttft <= slo_ttft_loose)
+        
+        total_paired = len(paired_data)
+        ttft_tight_ratio = ttft_tight_satisfied / total_paired * 100
+        ttft_loose_ratio = ttft_loose_satisfied / total_paired * 100
+        
+        print(f"\n--- TTFT SLO Satisfaction ---")
+        print(f"TTFT Tight SLO ({slo_ttft_tight:.3f}s) satisfied: {ttft_tight_satisfied}/{total_paired} ({ttft_tight_ratio:.1f}%)")
+        print(f"TTFT loose SLO ({slo_ttft_loose:.3f}s) satisfied: {ttft_loose_satisfied}/{total_paired} ({ttft_loose_ratio:.1f}%)")
     
-    # Store the Total Experiment Time and Total Requests
-    with open("benchmark_summary.json", 'w') as f:
-        summary = {
-            "total_experiment_time": experiment_end_time - experiment_start_time,
-            "total_requests": len(results),
-            "successful_requests": sum(1 for r in results if r['success']),
-            "failed_requests": sum(1 for r in results if not r['success'])
-        }
-        json.dump(summary, f, indent=2)
-    print(f"Summary saved to benchmark_summary.json")
+    # Calculate combined SLO attainment
+    if (slo_tpot is not None and len(slo_tpot) == 2 and 
+        slo_ttft is not None and len(slo_ttft) == 2):
+        both_tight_satisfied = sum(1 for tpot, ttft in paired_data 
+                                 if tpot <= slo_tpot_tight and ttft <= slo_ttft_tight)
+        both_loose_satisfied = sum(1 for tpot, ttft in paired_data 
+                                  if tpot <= slo_tpot_loose and ttft <= slo_ttft_loose)
+        
+        both_tight_ratio = both_tight_satisfied / total_paired * 100
+        both_loose_ratio = both_loose_satisfied / total_paired * 100
+        
+        print(f"\n--- Combined SLO Satisfaction ---")
+        print(f"Both Tight SLOs satisfied: {both_tight_satisfied}/{total_paired} ({both_tight_ratio:.1f}%)")
+        print(f"Both loose SLOs satisfied: {both_loose_satisfied}/{total_paired} ({both_loose_ratio:.1f}%)")
     
-    return results
-
 async def run_throughput_test(
     api_url,
     model_name,
@@ -865,13 +830,13 @@ async def main():
                 nestedfp=args.nestedfp,
             )
         else:
-            # Trace-based Test 실행
-            # 두 파라미터가 모두 없는 경우 기본값 설정
+            # Execute trace-based test
+            # Set default values if both parameters do not exist
             if args.num_requests is None and args.duration_minutes is None:
-                args.duration_minutes = 20.0  # 기본값: 20 minutes
+                args.duration_minutes = 20.0  # Default: 20 minutes
                 print("No duration or num_requests specified, using default: 20 minutes")
             
-            # 두 파라미터가 모두 제공된 경우 에러
+            # Error if both parameters are provided
             if args.num_requests is not None and args.duration_minutes is not None:
                 print("Error: Cannot specify both --num-requests and --duration-minutes. Please use only one.")
                 return

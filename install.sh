@@ -4,6 +4,8 @@ set -e # Exit on error
 
 # 1. Create environment
 conda env create -f nestedfp.yml
+source $(conda info --base)/etc/profile.d/conda.sh
+conda activate nestedfp
 
 # 2. Install vLLM 0.8.5 precompiled version
 #    Clone vLLM into a temporary folder, then copy only the .git directory

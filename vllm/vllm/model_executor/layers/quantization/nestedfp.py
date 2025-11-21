@@ -90,9 +90,9 @@ class NestedFPLinearMethod(LinearMethodBase):
         self.is_nestedfp_enabled = True # Set to False if weight condition is not satisfied
         NestedFPGlobalState.set_nestedfp_mode(True)
         # Set NestedFP FP8 mode (For accuracy evaluation)
-        #NestedFPGlobalState.set_fp8_mode(True)
+        NestedFPGlobalState.set_fp8_mode(True)
         # Set NestedFP FP16 mode (For throughput evaluation)
-        NestedFPGlobalState.set_fp8_mode(False)
+        #NestedFPGlobalState.set_fp8_mode(False)
 
     def create_weights(self, layer: torch.nn.Module,
                        input_size_per_partition: int,

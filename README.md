@@ -6,9 +6,9 @@
 
 ## Requirements
 
-- **Ubuntu 22.04**
-- **GCC/G++ 12.3.0**
 - **CUDA 12.6**
+
+> **Note:** Tested on Ubuntu 22.04 with GCC/G++ 11.4.0 and 12.3.0
 
 ### Optional
 ```bash
@@ -35,9 +35,7 @@ NestedFP/
 │   ├── vllm_simple_client.py  # vLLM client for sending requests
 │   └── kernel/
 │       ├── run_fp16_single.sh # FP16 kernel search (single GPU)
-│       ├── run_fp16_multi.sh  # FP16 kernel search (multi GPU)
-│       ├── run_fp8_single.sh  # FP8 kernel search (single GPU)
-│       └── run_fp8_multi.sh   # FP8 kernel search (multi GPU)
+│       └── run_fp16_multi.sh  # FP16 kernel search (multi GPU)
 └── example/                   # example usage scripts
 ```
 
@@ -51,9 +49,9 @@ NestedFP requires explicitly selecting the precision mode before each experiment
 |------|:---:|:---:|:---:|
 | **FP8** | ✅ Uncomment | ❌ Comment | ❌ Comment |
 | **FP16** | ❌ Comment | ✅ Uncomment | ❌ Comment |
-| **Dynamic Precision Selection** | ❌ Comment | ❌ Comment | ✅ Uncomment |
+| **Dynamic Precision Selection** | ✅ Uncomment | ❌ Comment | ✅ Uncomment |
 
-> **Note:** Only one precision mode can be active at a time.
+> **Note:** Only one precision mode can be active at a time. If performance results are inconsistent, clear `.cache/vllm/torch_compile_cache/` after switching experiment modes.
 
 ## Accuracy Evaluation
 
@@ -63,16 +61,17 @@ For accuracy evaluation, configure the precision mode to **FP8** (see [Precision
 
 **Command Format:**
 ```bash
-./scripts/acc_eval.sh <GPU_ID> <MODEL_PATH> --nestedfp
+./scripts/acc_eval.sh <GPU_ID> <MODEL_PATH> <TASK> --nestedfp
 ```
 
 **Parameters:**
 - `<GPU_ID>` — GPU index to use for evaluation
 - `<MODEL_PATH>` — Path to the model directory
+- `<TASK>` — lm_eval task to run
 
 ### Example
 ```bash
-./scripts/acc_eval.sh 0 Mistral-Small-24B-Base-2501 --nestedfp
+./scripts/acc_eval.sh 0 Mistral-Small-24B-Base-2501 bbh_zeroshot --nestedfp
 ```
 
 ### Output
@@ -154,6 +153,10 @@ python scripts/vllm_simple_client.py \
   --test-mode throughput
 ```
 
+**Parameters:**
+- `<MODEL_PATH>` — Path to the model directory
+- `--nestedfp` — Enables NestedFP mode (omit this flag for baseline FP16 mode)
+
 ### Examples
 
 **Vanilla FP16 Execution:**
@@ -196,9 +199,93 @@ You can customize the test parameters by passing additional options to `vllm_sim
 
 See the script's help documentation for all available options.
 
-### Notes
+## Dynamic Precision Selection
 
-For stable performance measurements, we recommend running each test at least twice.
+For the dynamic precision selection experiment, configure the precision mode to **Dynamic Precision Selection** (see [Precision Mode Configuration](#precision-mode-configuration)). Trace files are provided in the `trace` directory. Precision automatically switches to FP8 when the number of batched tokens exceeds 1024.
+
+#### 1. Start the Model Server
+
+Load your model using the following command:
+```bash
+python scripts/vllm_simple_server.py \
+  --model <MODEL_PATH> \
+  --max-num-batched-tokens 2048 \
+  --port 8000 \
+  --tensor-parallel-size <TP_SIZE>
+```
+
+**Parameters:**
+- `<MODEL_PATH>` — Path to the model directory
+- `<TP_SIZE>` — Tensor parallel size
+- `--quantization nestedfp` — Enables NestedFP mode (omit this flag for baseline FP16 mode)
+
+When the model loads successfully, you'll see:
+```
+INFO:     Started server process [200291]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+
+#### 2. Run the Client
+
+In a separate terminal, execute:
+```bash
+python scripts/vllm_simple_client.py \
+  --model <MODEL_PATH> \
+  --api-url http://0.0.0.0:8000/v1/completions \
+  --num-requests 1000 \
+  --middle-ratio 0.7 \
+  --test-mode trace \
+  --trace-file <TRACE_FILE>
+```
+
+**Parameters:**
+- `<MODEL_PATH>` — Path to the model directory
+- `<TRACE_FILE>` — Path to the trace file
+- `--nestedfp` — Enables NestedFP mode (omit this flag for baseline FP16 mode)
+
+### Examples
+
+**Vanilla Trace-based Test:**
+```bash
+# Start server
+python scripts/vllm_simple_server.py \
+  --model Llama-3.1-70B \
+  --max-num-batched-tokens 2048 \
+  --port 8000 \
+  --tensor-parallel-size 4
+
+# Run client
+python scripts/vllm_simple_client.py \
+  --model Llama-3.1-70B \
+  --api-url http://0.0.0.0:8000/v1/completions \
+  --num-requests 1000 \
+  --middle-ratio 0.7 \
+  --test-mode trace \
+  --trace-file trace/azure_conv_0514_1400_20min_10.0x_tc.csv
+```
+
+**NestedFP Trace-based Test:**
+```bash
+# Start server with NestedFP
+python scripts/vllm_simple_server.py \
+  --model Llama-3.1-70B \
+  --max-num-batched-tokens 2048 \
+  --port 8010 \
+  --tensor-parallel-size 4 \
+  --quantization nestedfp
+
+# Run client with NestedFP
+python scripts/vllm_simple_client.py \
+  --model Llama-3.1-70B \
+  --api-url http://0.0.0.0:8010/v1/completions \
+  --num-requests 1000 \
+  --middle-ratio 0.7 \
+  --test-mode trace \
+  --trace-file trace/azure_conv_0514_1400_20min_10.0x_tc.csv \
+  --nestedfp
+```
 
 ## Citation
 
